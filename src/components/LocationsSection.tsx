@@ -18,9 +18,18 @@ const LocationsSection = () => (
           <div key={loc.id} className="bg-card rounded-2xl p-6 shadow-sm hover:shadow-md transition-shadow border border-border">
             <h3 className="font-heading text-xl font-bold uppercase text-foreground mb-4">{loc.name}</h3>
             <div className="space-y-3 font-body text-sm text-muted-foreground">
-              <div className="flex items-start gap-3">
+              <div className="flex items-start gap-3 group">
                 <MapPin className="w-4 h-4 text-primary mt-0.5 shrink-0" />
-                <span>{loc.address}, {loc.city}, {loc.state} {loc.zip}</span>
+                <a
+                  href={loc.googleMapsUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="hover:text-primary transition-colors flex items-center gap-1"
+                  aria-label={`View ${loc.name} location on Google Maps`}
+                >
+                  <span>{loc.address}, {loc.city}, {loc.state} {loc.zip}</span>
+                  <ExternalLink className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity" />
+                </a>
               </div>
               <div className="flex items-center gap-3">
                 <Phone className="w-4 h-4 text-primary shrink-0" />
