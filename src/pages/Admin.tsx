@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { useToast } from '@/hooks/use-toast';
-import { Shield, Trash2, ArrowLeft } from 'lucide-react';
+import { Shield, Trash2, ArrowLeft, KeyRound } from 'lucide-react';
+import ChangePasswordModal from '@/components/ChangePasswordModal';
 
 type User = { id: string, email: string, is_admin: boolean, created_at: string };
 
@@ -13,6 +14,8 @@ export default function Admin() {
   const [newPassword, setNewPassword] = useState('');
   const [newIsAdmin, setNewIsAdmin] = useState(false);
   const [addingUser, setAddingUser] = useState(false);
+  const [passwordModalOpen, setPasswordModalOpen] = useState(false);
+  const [passwordModalUserId, setPasswordModalUserId] = useState<string | null>(null);
   const { toast } = useToast();
   const navigate = useNavigate();
 
@@ -82,6 +85,11 @@ export default function Admin() {
     }
   };
 
+  const openPasswordModal = (id: string) => {
+    setPasswordModalUserId(id);
+    setPasswordModalOpen(true);
+  };
+
   if (!user?.is_admin) return null;
 
   return (
@@ -99,9 +107,17 @@ export default function Admin() {
               <p className="text-muted-foreground text-sm">Manage user access and roles.</p>
             </div>
           </div>
-          <button onClick={logout} className="px-4 py-2 bg-secondary hover:bg-secondary/80 text-foreground border border-slate-600 rounded-lg text-sm font-medium transition">
-            Sign out
-          </button>
+          <div className="flex items-center gap-4">
+            <button
+              onClick={() => openPasswordModal(user.id as string)}
+              className="flex items-center gap-1.5 text-muted-foreground hover:text-foreground text-sm transition-colors whitespace-nowrap"
+            >
+              <KeyRound className="w-4 h-4" /> Change Password
+            </button>
+            <button onClick={logout} className="px-4 py-2 bg-secondary hover:bg-secondary/80 text-foreground border border-slate-600 rounded-lg text-sm font-medium transition">
+              Sign out
+            </button>
+          </div>
         </header>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -158,9 +174,17 @@ export default function Admin() {
                         {u.is_admin ? 'Revoke Admin' : 'Make Admin'}
                       </button>
                       <button
+                        onClick={() => openPasswordModal(u.id)}
+                        className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-secondary rounded-lg transition"
+                        title="Change Password"
+                      >
+                        <KeyRound className="w-4 h-4" />
+                      </button>
+                      <button
                         onClick={() => removeUser(u.id)}
                         disabled={u.id == user.id}
                         className="p-1.5 text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 disabled:opacity-50 rounded-lg transition"
+                        title="Delete User"
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>
@@ -173,6 +197,12 @@ export default function Admin() {
           </div>
         </div>
       </div>
+
+      <ChangePasswordModal
+        isOpen={passwordModalOpen}
+        onClose={() => setPasswordModalOpen(false)}
+        userId={passwordModalUserId}
+      />
     </div>
   );
 }

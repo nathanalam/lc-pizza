@@ -6,8 +6,9 @@ import { Doughnut, Bar } from 'react-chartjs-2';
 import {
   Chart as ChartJS, CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend, ArcElement
 } from 'chart.js';
-import { Upload, Database, Loader2, Download, Shield, CalendarIcon } from 'lucide-react';
+import { Upload, Database, Loader2, Download, Shield, CalendarIcon, KeyRound } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import ChangePasswordModal from '@/components/ChangePasswordModal';
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend, ArcElement);
 
@@ -53,6 +54,7 @@ export default function Dashboard() {
   const [currentStore, setCurrentStore] = useState('ALL');
 
   const [dateRange, setDateRange] = useState({ start: '', end: '' });
+  const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
 
   useEffect(() => {
     fetchData();
@@ -406,6 +408,12 @@ export default function Dashboard() {
                 <Shield className="w-4 h-4" /> Admin Panel
               </button>
             )}
+            <button
+              onClick={() => setIsPasswordModalOpen(true)}
+              className="flex items-center gap-1.5 text-muted-foreground hover:text-foreground text-sm mr-2 transition-colors whitespace-nowrap"
+            >
+              <KeyRound className="w-4 h-4" /> Change Password
+            </button>
             <button onClick={logout} className="text-muted-foreground hover:text-foreground text-sm mr-2 transition-colors whitespace-nowrap">Sign out ({user?.email})</button>
 
             {/* Date Filters */}
@@ -707,6 +715,12 @@ export default function Dashboard() {
           </div>
         )}
       </div>
+
+      <ChangePasswordModal
+        isOpen={isPasswordModalOpen}
+        onClose={() => setIsPasswordModalOpen(false)}
+        userId={user?.id as string}
+      />
     </div>
   );
 }

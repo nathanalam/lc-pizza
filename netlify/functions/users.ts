@@ -14,20 +14,22 @@ export default async function handler(request: Request) {
 
     const token = authHeader.split(' ')[1];
     const decoded = jwt.verify(token, JWT_SECRET) as { userId: string, isAdmin: boolean };
-    
-    if (!decoded.isAdmin) {
-      return Response.json({ error: 'Forbidden' }, { status: 403 });
-    }
 
     const sql = neon(process.env.NETLIFY_DATABASE_URL!);
     const url = new URL(request.url);
 
     if (request.method === 'GET') {
+      if (!decoded.isAdmin) {
+        return Response.json({ error: 'Forbidden' }, { status: 403 });
+      }
       const users = await sql`SELECT id, email, is_admin, created_at FROM users ORDER BY created_at DESC`;
       return Response.json({ users });
     }
 
     if (request.method === 'POST') {
+      if (!decoded.isAdmin) {
+        return Response.json({ error: 'Forbidden' }, { status: 403 });
+      }
       const { email, password, is_admin } = await request.json();
       if (!email || !password) return Response.json({ error: 'Missing fields' }, { status: 400 });
       
@@ -46,6 +48,9 @@ export default async function handler(request: Request) {
     }
 
     if (request.method === 'DELETE') {
+      if (!decoded.isAdmin) {
+        return Response.json({ error: 'Forbidden' }, { status: 403 });
+      }
       const id = url.searchParams.get('id');
       if (id === decoded.userId) {
         return Response.json({ error: 'Cannot delete yourself' }, { status: 400 });
@@ -56,11 +61,27 @@ export default async function handler(request: Request) {
 
     if (request.method === 'PATCH') {
       const id = url.searchParams.get('id');
-      const { is_admin } = await request.json();
-      if (id === decoded.userId) {
-        return Response.json({ error: 'Cannot change your own admin status' }, { status: 400 });
+      const body = await request.json();
+
+      if (!decoded.isAdmin && id !== decoded.userId) {
+        return Response.json({ error: 'Forbidden' }, { status: 403 });
       }
-      await sql`UPDATE users SET is_admin = ${is_admin} WHERE id = ${id}`;
+
+      if (body.is_admin !== undefined) {
+        if (!decoded.isAdmin) {
+          return Response.json({ error: 'Forbidden' }, { status: 403 });
+        }
+        if (id === decoded.userId) {
+          return Response.json({ error: 'Cannot change your own admin status' }, { status: 400 });
+        }
+        await sql`UPDATE users SET is_admin = ${body.is_admin} WHERE id = ${id}`;
+      }
+
+      if (body.password) {
+        const hashedPassword = await bcrypt.hash(body.password, 10);
+        await sql`UPDATE users SET password = ${hashedPassword} WHERE id = ${id}`;
+      }
+
       return Response.json({ success: true });
     }
 
