@@ -37,6 +37,38 @@ type AppState = {
   manual: Record<string, StoreManualAdjustment>;
 };
 
+const ManualInput = ({ value, onChange, placeholder, className }: { value: number | string, onChange: (val: number) => void, placeholder: string, className: string }) => {
+  const [localValue, setLocalValue] = useState(value.toString());
+
+  useEffect(() => {
+    setLocalValue(value.toString());
+  }, [value]);
+
+  const handleBlur = () => {
+    if (localValue === value.toString()) return;
+    const parsed = parseFloat(localValue);
+    onChange(isNaN(parsed) ? 0 : parsed);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.currentTarget.blur();
+    }
+  };
+
+  return (
+    <input
+      type="number"
+      value={localValue}
+      onChange={e => setLocalValue(e.target.value)}
+      onBlur={handleBlur}
+      onKeyDown={handleKeyDown}
+      placeholder={placeholder}
+      className={className}
+    />
+  );
+};
+
 export default function Dashboard() {
   const { user, token, logout } = useAuth();
   const navigate = useNavigate();
@@ -511,7 +543,7 @@ export default function Dashboard() {
               {/* Manual Edits */}
               <div className="bg-card border border-border p-5 rounded-2xl flex flex-col shadow-lg xl:col-span-1">
                 <div className="flex flex-col gap-1 mb-4">
-                  <h3 className="text-sm font-bold text-foreground uppercase tracking-wider">Manual Adj.</h3>
+                  <h3 className="text-sm font-bold text-foreground uppercase tracking-wider">Manual Adjustments</h3>
                   <p className="text-xs text-primary italic">
                     {currentStore === 'ALL' ? 'Apply baseline to ALL stores' : `Adjusting Store ${currentStore.split('-').pop()}`}
                   </p>
@@ -531,10 +563,10 @@ export default function Dashboard() {
                   ].map((f: any, i) => f.sep ? <hr key={i} className="border-border" /> : (
                     <div key={i} className="flex justify-between items-center">
                       <label className="text-sm text-muted-foreground">{f.l}</label>
-                      <input
-                        type="number"
-                        value={currentStore === 'ALL' ? '' : (activeManual[f.k as keyof StoreManualAdjustment] || '')}
-                        onChange={e => handleManualChange(f.k as keyof StoreManualAdjustment, parseFloat(e.target.value) || 0)}
+                      <ManualInput
+                        key={`${currentStore}-${f.k}`}
+                        value={currentStore === 'ALL' ? '' : (activeManual[f.k as keyof StoreManualAdjustment] ?? '')}
+                        onChange={val => handleManualChange(f.k as keyof StoreManualAdjustment, val)}
                         placeholder={(f.p).toString()}
                         className={`bg-background border border-border rounded px-2 py-1 w-${f.w} text-right text-foreground text-sm focus:outline-none focus:border-primary`}
                       />
