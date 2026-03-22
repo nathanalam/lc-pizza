@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
 import Index from "./pages/Index";
+import Dashboard from "./pages/Dashboard";
 import Login from "./pages/Login";
 import Signup from "./pages/Signup";
 import Admin from "./pages/Admin";
@@ -22,6 +23,7 @@ const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
 const AppRoutes = () => {
   return (
     <Routes>
+      <Route path="/" element={<Index />} />
       <Route path="/login" element={<Login />} />
       <Route path="/signup" element={<Signup />} />
       <Route path="/admin" element={
@@ -29,9 +31,9 @@ const AppRoutes = () => {
           <Admin />
         </ProtectedRoute>
       } />
-      <Route path="/" element={
+      <Route path="/dashboard" element={
         <ProtectedRoute>
-          <Index />
+          <Dashboard />
         </ProtectedRoute>
       } />
       <Route path="*" element={<NotFound />} />

@@ -5,6 +5,7 @@ const navLinks = [
   { label: "Locations", href: "#locations" },
   { label: "About Us", href: "#about" },
   { label: "Partnerships", href: "#partnerships" },
+  { label: "Portal", href: "/dashboard" },
 ];
 
 const Navbar = () => {

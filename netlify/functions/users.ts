@@ -1,5 +1,6 @@
 import { neon } from '@netlify/neon';
 import jwt from 'jsonwebtoken';
+import bcrypt from 'bcryptjs';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'supersecretkey123';
 
@@ -23,6 +24,24 @@ export default async function handler(request: Request) {
     if (request.method === 'GET') {
       const users = await sql`SELECT id, email, is_admin, created_at FROM users ORDER BY created_at DESC`;
       return Response.json({ users });
+    }
+
+    if (request.method === 'POST') {
+      const { email, password, is_admin } = await request.json();
+      if (!email || !password) return Response.json({ error: 'Missing fields' }, { status: 400 });
+      
+      const hashedPassword = await bcrypt.hash(password, 10);
+      try {
+        const [newUser] = await sql`
+          INSERT INTO users (email, password, is_admin)
+          VALUES (${email}, ${hashedPassword}, ${is_admin || false})
+          RETURNING id, email, is_admin
+        `;
+        return Response.json({ user: newUser });
+      } catch (e: any) {
+        if (e.message.includes('duplicate key value')) return Response.json({ error: 'Email already exists' }, { status: 409 });
+        throw e;
+      }
     }
 
     if (request.method === 'DELETE') {

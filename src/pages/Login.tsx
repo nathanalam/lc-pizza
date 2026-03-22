@@ -29,7 +29,7 @@ export default function Login() {
       
       login(data.user, data.token);
       toast({ title: 'Success', description: 'Logged in successfully' });
-      navigate('/');
+      navigate('/dashboard');
     } catch (error: any) {
       toast({ title: 'Error', description: error.message, variant: 'destructive' });
     } finally {
@@ -38,19 +38,19 @@ export default function Login() {
   };
 
   return (
-    <div className="flex items-center justify-center min-h-screen bg-slate-950 p-4">
-      <div className="w-full max-w-md bg-slate-900 border border-slate-800 p-8 rounded-2xl shadow-xl">
+    <div className="flex items-center justify-center min-h-screen bg-background p-4">
+      <div className="w-full max-w-md bg-card border border-border p-8 rounded-2xl shadow-xl">
         <div className="flex flex-col items-center mb-8">
-          <div className="w-12 h-12 bg-blue-500/10 rounded-xl flex items-center justify-center mb-4">
-            <Layers className="text-blue-500 w-6 h-6" />
+          <div className="w-12 h-12 bg-primary/10 rounded-xl flex items-center justify-center mb-4">
+            <Layers className="text-primary w-6 h-6" />
           </div>
-          <h1 className="text-2xl font-bold text-white tracking-tight">Welcome Back</h1>
-          <p className="text-slate-400 text-sm mt-1">Sign in to your account</p>
+          <h1 className="text-2xl font-bold text-foreground tracking-tight">Welcome Back</h1>
+          <p className="text-muted-foreground text-sm mt-1">Sign in to your account</p>
         </div>
 
         <form onSubmit={handleLogin} className="space-y-6">
           <div className="space-y-2">
-            <Label htmlFor="email" className="text-slate-300">Email Address</Label>
+            <Label htmlFor="email" className="text-foreground">Email Address</Label>
             <Input 
               id="email" 
               type="email" 
@@ -58,11 +58,11 @@ export default function Login() {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
-              className="bg-slate-950 border-slate-800 text-white placeholder:text-slate-600"
+              className="bg-background border-border text-foreground placeholder:text-muted-foreground"
             />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="password" className="text-slate-300">Password</Label>
+            <Label htmlFor="password" className="text-foreground">Password</Label>
             <Input 
               id="password" 
               type="password" 
@@ -70,16 +70,16 @@ export default function Login() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
-              className="bg-slate-950 border-slate-800 text-white placeholder:text-slate-600"
+              className="bg-background border-border text-foreground placeholder:text-muted-foreground"
             />
           </div>
-          <Button type="submit" className="w-full bg-blue-600 hover:bg-blue-500 text-white rounded-lg py-5 mt-2" disabled={loading}>
+          <Button type="submit" className="w-full bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg py-5 mt-2" disabled={loading}>
             {loading ? 'Signing in...' : 'Sign In'}
           </Button>
         </form>
 
-        <p className="text-center text-slate-400 text-sm mt-6">
-          Don't have an account? <Link to="/signup" className="text-blue-400 hover:text-blue-300 transition-colors font-medium">Sign up</Link>
+        <p className="text-center text-muted-foreground text-sm mt-6">
+          Don't have an account? <Link to="/signup" className="text-primary hover:text-primary/80 transition-colors font-medium">Sign up</Link>
         </p>
       </div>
     </div>

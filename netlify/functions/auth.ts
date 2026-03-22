@@ -25,6 +25,10 @@ export default async function handler(request: Request) {
       const [{ count }] = await sql`SELECT COUNT(*)::int FROM users`;
       const isFirstUser = count === 0;
 
+      if (!isFirstUser) {
+        return Response.json({ error: 'Signups are closed. Please ask an admin to invite you.' }, { status: 403 });
+      }
+
       const hashedPassword = await bcrypt.hash(password, 10);
       try {
         const [newUser] = await sql`
