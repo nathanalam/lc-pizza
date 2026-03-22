@@ -32,6 +32,9 @@ type AppState = {
     items: RawDataRow[];
     txns: RawDataRow[];
     sales: RawDataRow[];
+    inventory: RawDataRow[];
+    invoices: RawDataRow[];
+    labor: RawDataRow[];
   };
   manual: Record<string, StoreManualAdjustment>;
 };
@@ -45,7 +48,7 @@ export default function Dashboard() {
   const [dataLoading, setDataLoading] = useState(true);
 
   const [state, setState] = useState<AppState>({
-    raw: { summary: [], items: [], txns: [], sales: [] },
+    raw: { summary: [], items: [], txns: [], sales: [], inventory: [], invoices: [], labor: [] },
     manual: {},
   });
 
@@ -65,7 +68,7 @@ export default function Dashboard() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
 
-      const newState: AppState = { raw: { summary: [], items: [], txns: [], sales: [] }, manual: {} };
+      const newState: AppState = { raw: { summary: [], items: [], txns: [], sales: [], inventory: [], invoices: [], labor: [] }, manual: {} };
       const uniqueStores = new Set<string>();
 
       let maxDateMs = 0;
@@ -76,12 +79,23 @@ export default function Dashboard() {
         if (payload.items) newState.raw.items.push(...payload.items);
         if (payload.txns) newState.raw.txns.push(...payload.txns);
         if (payload.sales) newState.raw.sales.push(...payload.sales);
+        if (payload.inventory) newState.raw.inventory.push(...payload.inventory);
+        if (payload.invoices) newState.raw.invoices.push(...payload.invoices);
+        if (payload.labor) newState.raw.labor.push(...payload.labor);
 
         const dMs = new Date(r.business_date).getTime();
         if (!isNaN(dMs) && dMs > maxDateMs) maxDateMs = dMs;
       });
 
-      [...newState.raw.summary, ...newState.raw.items, ...newState.raw.txns, ...newState.raw.sales].forEach(row => {
+      [
+        ...newState.raw.summary,
+        ...newState.raw.items,
+        ...newState.raw.txns,
+        ...newState.raw.sales,
+        ...newState.raw.inventory,
+        ...newState.raw.invoices,
+        ...newState.raw.labor
+      ].forEach(row => {
         const storeStr = (row['Franchise Store'] || '').toString().trim();
         if (storeStr) {
           uniqueStores.add(storeStr);
@@ -145,7 +159,7 @@ export default function Dashboard() {
     if (files.length === 0) return;
     setLoading(true);
 
-    let parsed = { summary: [] as any[], items: [] as any[], txns: [] as any[], sales: [] as any[] };
+    let parsed = { summary: [] as any[], items: [] as any[], txns: [] as any[], sales: [] as any[], inventory: [] as any[], invoices: [] as any[], labor: [] as any[] };
 
     try {
       for (const file of files) {
@@ -154,9 +168,18 @@ export default function Dashboard() {
         const worksheet = workbook.Sheets[workbook.SheetNames[0]];
         const rows: any[] = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
 
+        const name = file.name.toLowerCase();
         let headerIdx = -1;
+
         for (let i = 0; i < Math.min(20, rows.length); i++) {
-          if (rows[i] && rows[i].includes('Franchise Store')) { headerIdx = i; break; }
+          if (!rows[i] || !rows[i].length) continue;
+          if (
+            rows[i].includes('Franchise Store') ||
+            (rows[i].includes('Store Number') && rows[i].includes('Total Pay')) || // Labor
+            (rows[i].includes('Store Number') && rows[i].includes('Invoice Total')) // Invoices
+          ) {
+            headerIdx = i; break;
+          }
         }
 
         let data: any[] = [];
@@ -168,30 +191,38 @@ export default function Dashboard() {
             headers.forEach((header: string, index: number) => {
               if (header) {
                 let val = rows[i][index];
-                if (header === 'Business Date' && val instanceof Date) {
+                // Handle different date columns
+                const isDateCol = header === 'Business Date' || header === 'Date' || header === 'Applied Delivery Date';
+                if (isDateCol && val instanceof Date) {
                   val = val.toISOString().split('T')[0];
-                } else if (header === 'Business Date') {
+                } else if (isDateCol && val) {
                   try { val = new Date(val).toISOString().split('T')[0]; } catch { }
                 }
                 rowObj[header] = val;
               }
             });
+
+            // Standardize store ID
+            if (rowObj['Store Number']) {
+               rowObj['Franchise Store'] = rowObj['Store Number'];
+            }
             if (rowObj['Franchise Store']) data.push(rowObj);
           }
         }
 
-        const name = file.name.toLowerCase();
         if (name.includes('items')) parsed.items = data;
         else if (name.includes('transactions')) parsed.txns = data;
         else if (name.includes('sales')) parsed.sales = data;
+        else if (name.includes('labor')) parsed.labor = data;
+        else if (name.includes('invoice')) parsed.invoices = data;
+        else if (name.includes('inventory')) parsed.inventory = data;
         else parsed.summary = data;
       }
 
       const dailyMap: Record<string, any> = {};
       const registerDay = (row: any, type: string) => {
-        const d = row['Business Date'];
-        if (!d) return;
-        if (!dailyMap[d]) dailyMap[d] = { business_date: d, data: { summary: [], items: [], txns: [], sales: [] } };
+        const d = row['Business Date'] || row['Date'] || row['Applied Delivery Date'] || '1970-01-01';
+        if (!dailyMap[d]) dailyMap[d] = { business_date: d, data: { summary: [], items: [], txns: [], sales: [], inventory: [], invoices: [], labor: [] } };
         dailyMap[d].data[type].push(row);
       };
 
@@ -199,6 +230,9 @@ export default function Dashboard() {
       parsed.items.forEach(r => registerDay(r, 'items'));
       parsed.txns.forEach(r => registerDay(r, 'txns'));
       parsed.sales.forEach(r => registerDay(r, 'sales'));
+      parsed.inventory.forEach(r => registerDay(r, 'inventory'));
+      parsed.invoices.forEach(r => registerDay(r, 'invoices'));
+      parsed.labor.forEach(r => registerDay(r, 'labor'));
 
       const reportsToUpload = Object.values(dailyMap);
 
@@ -224,7 +258,7 @@ export default function Dashboard() {
     const fStore = (row: any) => currentStore === 'ALL' || (row['Franchise Store'] || '').toString().trim() === currentStore;
     const fDate = (row: any) => {
       if (!dateRange.start || !dateRange.end) return true;
-      const bd = (row['Business Date'] || '').toString();
+      const bd = (row['Business Date'] || row['Date'] || row['Applied Delivery Date'] || '').toString();
       return bd >= dateRange.start && bd <= dateRange.end;
     };
     const f = (row: any) => fStore(row) && fDate(row);
@@ -233,12 +267,16 @@ export default function Dashboard() {
       summary: state.raw.summary.filter(f),
       items: state.raw.items.filter(f),
       txns: state.raw.txns.filter(f),
-      sales: state.raw.sales.filter(f)
+      sales: state.raw.sales.filter(f),
+      inventory: state.raw.inventory.filter(f),
+      invoices: state.raw.invoices.filter(f),
+      labor: state.raw.labor.filter(f)
     };
   }, [state, currentStore, dateRange]);
 
   const stats = useMemo(() => {
     let tGross = 0, tTax = 0, tTxns = 0, tVar = 0, v3p = 0, rOblig = 0;
+    let laborCost = 0, invUsageCost = 0, invoiceCost = 0;
 
     filteredData.summary.forEach(r => {
       tGross += Number(r['Gross Sales']) || 0;
@@ -255,8 +293,31 @@ export default function Dashboard() {
       }
     });
 
+    filteredData.labor.forEach(r => {
+      laborCost += Number(r['Total Pay']) || 0;
+    });
+
+    filteredData.inventory.forEach(r => {
+      invUsageCost += Number(r['Used Value']) || 0;
+    });
+
+    filteredData.invoices.forEach(r => {
+      invoiceCost += Number(r['Invoice Total']) || 0;
+    });
+
     const tNet = tGross - tTax;
-    const cogs = tNet * COGS_PCT;
+
+    // Determine COGS
+    let isCogsEstimated = false;
+    let cogs = 0;
+    if (invUsageCost > 0) {
+      cogs = invUsageCost;
+    } else if (invoiceCost > 0) {
+      cogs = invoiceCost;
+    } else {
+      cogs = tNet * COGS_PCT;
+      isCogsEstimated = true;
+    }
 
     let mDel = 0, mRoy = 0, mRent = 0, mUtil = 0, mMaint = 0, mSga = 0, mPayouts = 0, mCapex = 0;
 
@@ -284,7 +345,7 @@ export default function Dashboard() {
       }
     });
 
-    const opProfit = tNet - cogs - mDel - mRoy - mRent - mUtil - mMaint - mSga - mPayouts - mCapex;
+    const opProfit = tNet - cogs - laborCost - mDel - mRoy - mRent - mUtil - mMaint - mSga - mPayouts - mCapex;
 
     let carryout = 0, delivery = 0;
     filteredData.sales.forEach(r => {
@@ -306,6 +367,8 @@ export default function Dashboard() {
     // Generate store mix
     const storeMix = stores.map(s => {
       let gross = 0, tax = 0, sOblig = 0;
+      let sLabor = 0, sInvUsage = 0, sInvoice = 0;
+
       filteredData.summary.filter(r => (r['Franchise Store'] || '').toString().trim() === s).forEach(r => {
         gross += Number(r['Gross Sales']) || 0;
         tax += Number(r['Sales Tax']) || 0;
@@ -316,16 +379,30 @@ export default function Dashboard() {
         const m = String(r['Payment Method'] || '').toUpperCase();
         if (m.includes('DOORDASH') || m.includes('UBEREATS') || m.includes('GRUBHUB')) sV3p += Number(r['Total Amount']) || 0;
       });
+      filteredData.labor.filter(r => (r['Franchise Store'] || '').toString().trim() === s).forEach(r => {
+        sLabor += Number(r['Total Pay']) || 0;
+      });
+      filteredData.inventory.filter(r => (r['Franchise Store'] || '').toString().trim() === s).forEach(r => {
+        sInvUsage += Number(r['Used Value']) || 0;
+      });
+      filteredData.invoices.filter(r => (r['Franchise Store'] || '').toString().trim() === s).forEach(r => {
+        sInvoice += Number(r['Invoice Total']) || 0;
+      });
 
       const man = state.manual[s] || { rent: 0, util: 0, maint: 0, sga: 0, payouts: 0, capex: 0, deliveryPct: 20, royaltyPct: 10 };
       const net = gross - tax;
-      const cogsVal = net * COGS_PCT;
+
+      let cogsVal = 0;
+      if (sInvUsage > 0) cogsVal = sInvUsage;
+      else if (sInvoice > 0) cogsVal = sInvoice;
+      else cogsVal = net * COGS_PCT;
+
       const sDelFee = sV3p * ((man.deliveryPct || 20) / 100);
       const sRoyaltyFee = sOblig * ((man.royaltyPct || 10) / 100);
       const rentUtil = (man.rent || 0) + (man.util || 0);
       const otherExp = (man.maint || 0) + (man.sga || 0) + (man.payouts || 0) + (man.capex || 0);
-      const op = net - cogsVal - sDelFee - sRoyaltyFee - rentUtil - otherExp;
-      return { s, net, cogs: cogsVal, delFee: sDelFee, royaltyFee: sRoyaltyFee, rentUtil, otherExp, op, marg: net > 0 ? ((op / net) * 100).toFixed(1) : "0.0" };
+      const op = net - cogsVal - sLabor - sDelFee - sRoyaltyFee - rentUtil - otherExp;
+      return { s, net, cogs: cogsVal, labor: sLabor, delFee: sDelFee, royaltyFee: sRoyaltyFee, rentUtil, otherExp, op, marg: net > 0 ? ((op / net) * 100).toFixed(1) : "0.0" };
     }).sort((a, b) => b.op - a.op);
 
     // Product Mix
@@ -363,7 +440,7 @@ export default function Dashboard() {
     const exportRows = Object.keys(exportMap).sort().map(s => ({ s, weekEndDateStr, ...exportMap[s] }));
 
     return {
-      tGross, tTax, tNet, cogs, tTxns, tVar, v3p, rOblig,
+      tGross, tTax, tNet, cogs, isCogsEstimated, laborCost, tTxns, tVar, v3p, rOblig,
       mDel, mRoy, mRent, mUtil, mMaint, mSga, mPayouts, mCapex, opProfit,
       margin: tNet > 0 ? (opProfit / tNet) * 100 : 0,
       carryout, delivery,
@@ -419,7 +496,7 @@ export default function Dashboard() {
             {user?.is_admin && (
               <label className="cursor-pointer bg-primary/10 hover:bg-primary/20 text-primary transition-colors px-4 py-2 rounded-lg border border-primary/20 flex items-center gap-2 text-sm font-medium whitespace-nowrap">
                 {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
-                {loading ? 'Processing...' : 'Upload 4 Excel Files'}
+                {loading ? 'Processing...' : 'Upload Excel Files'}
                 <input type="file" multiple accept=".xlsx,.csv" className="hidden" onChange={handleFileUpload} />
               </label>
             )}
@@ -434,17 +511,17 @@ export default function Dashboard() {
           </div>
         </header>
 
-        {dataLoading && state.raw.summary.length === 0 ? (
+        {dataLoading && state.raw.summary.length === 0 && state.raw.labor.length === 0 && state.raw.invoices.length === 0 && state.raw.inventory.length === 0 ? (
           <div className="bg-card border border-border p-12 rounded-2xl text-center flex flex-col items-center">
             <Loader2 className="w-8 h-8 text-primary animate-spin mb-4" />
             <p className="text-muted-foreground">Loading historical data from database...</p>
           </div>
-        ) : state.raw.summary.length === 0 ? (
+        ) : state.raw.summary.length === 0 && state.raw.labor.length === 0 && state.raw.invoices.length === 0 && state.raw.inventory.length === 0 ? (
           <div className="bg-card border border-border border-dashed p-12 rounded-2xl text-center">
             <Database className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
             <p className="text-muted-foreground">
               {user?.is_admin 
-                ? 'Database is empty. Upload Summary, Items, Transactions, and Sales XLSX files.'
+                ? 'Database is empty. Upload LCE Gateway and Altametrics files.'
                 : 'Database is empty. Please contact an administrator to upload data.'}
             </p>
           </div>
@@ -478,7 +555,8 @@ export default function Dashboard() {
                   <div className="flex justify-between font-bold text-foreground border-b border-border pb-2"><span>Net Sales</span><span>{formatCur(stats.tNet)}</span></div>
 
                   {[
-                    { l: 'COGS (Est. 28%)', v: stats.cogs },
+                    { l: stats.isCogsEstimated ? 'COGS (Est. 28%)' : 'COGS (Actual)', v: stats.cogs },
+                    ...(stats.laborCost > 0 ? [{ l: 'Labor', v: stats.laborCost }] : []),
                     { l: '3rd Party Delivery Fees', v: stats.mDel },
                     { l: 'Franchise & Ad Fees', v: stats.mRoy },
                     { l: 'Rent', v: stats.mRent },
@@ -584,6 +662,7 @@ export default function Dashboard() {
                       <th className="px-4 py-3 rounded-tl-lg">Store</th>
                       <th className="px-4 py-3 text-right">Net Sales</th>
                       <th className="px-4 py-3 text-right">COGS</th>
+                      {stats.laborCost > 0 && <th className="px-4 py-3 text-right">Labor</th>}
                       <th className="px-4 py-3 text-right">3rd Pty Fees</th>
                       <th className="px-4 py-3 text-right">Fran. Fee</th>
                       <th className="px-4 py-3 text-right">Rent/Util</th>
@@ -598,6 +677,7 @@ export default function Dashboard() {
                         <td className="px-4 py-2 font-medium">Store {row.s.split('-').pop()}</td>
                         <td className="px-4 py-2 text-right">{formatCur(row.net)}</td>
                         <td className="px-4 py-2 text-right">{formatCur(row.cogs)}</td>
+                        {stats.laborCost > 0 && <td className="px-4 py-2 text-right">{formatCur(row.labor)}</td>}
                         <td className="px-4 py-2 text-right text-rose-400">{formatCur(row.delFee)}</td>
                         <td className="px-4 py-2 text-right">{formatCur(row.royaltyFee)}</td>
                         <td className="px-4 py-2 text-right">{formatCur(row.rentUtil)}</td>
