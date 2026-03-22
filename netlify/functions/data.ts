@@ -1,4 +1,5 @@
-import { neon } from '@netlify/neon';
+import 'dotenv/config';
+import { neon } from '@neondatabase/serverless';
 import jwt from 'jsonwebtoken';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'supersecretkey123';
@@ -13,7 +14,7 @@ export default async function handler(request: Request) {
     const token = authHeader.split(' ')[1];
     jwt.verify(token, JWT_SECRET);
 
-    const sql = neon();
+    const sql = neon(process.env.NETLIFY_DATABASE_URL!);
 
     if (request.method === 'GET') {
       const reports = await sql`

@@ -15,3 +15,8 @@
   from = "/*"
   to = "/index.html"
   status = 200
+
+[dev]
+  command = "npm run vite:dev"
+  targetPort = 8080
+  port = 8888

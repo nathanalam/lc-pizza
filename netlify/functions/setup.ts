@@ -1,8 +1,9 @@
-import { neon } from '@netlify/neon';
+import 'dotenv/config';
+import { neon } from '@neondatabase/serverless';
 
 export default async function handler(request: Request) {
   try {
-    const sql = neon();
+    const sql = neon(process.env.NETLIFY_DATABASE_URL!);
     
     // Create users table
     await sql`

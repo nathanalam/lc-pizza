@@ -1,4 +1,5 @@
-import { neon } from '@netlify/neon';
+import 'dotenv/config';
+import { neon } from '@neondatabase/serverless';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 
@@ -18,7 +19,7 @@ export default async function handler(request: Request) {
       return Response.json({ error: 'Forbidden' }, { status: 403 });
     }
 
-    const sql = neon();
+    const sql = neon(process.env.NETLIFY_DATABASE_URL!);
     const url = new URL(request.url);
 
     if (request.method === 'GET') {
