@@ -168,9 +168,9 @@ export default function Dashboard() {
             headers.forEach((header: string, index: number) => {
               if (header) {
                 let val = rows[i][index];
-                if (header === 'Business Date' && val instanceof Date) {
+                if ((header === 'Business Date' || header === 'Date') && val instanceof Date) {
                   val = val.toISOString().split('T')[0];
-                } else if (header === 'Business Date') {
+                } else if (header === 'Business Date' || header === 'Date') {
                   try { val = new Date(val).toISOString().split('T')[0]; } catch { }
                 }
                 rowObj[header] = val;
@@ -189,7 +189,7 @@ export default function Dashboard() {
 
       const dailyMap: Record<string, any> = {};
       const registerDay = (row: any, type: string) => {
-        const d = row['Business Date'];
+        const d = row['Business Date'] || row['Date'];
         if (!d) return;
         if (!dailyMap[d]) dailyMap[d] = { business_date: d, data: { summary: [], items: [], txns: [], sales: [] } };
         dailyMap[d].data[type].push(row);
@@ -224,7 +224,7 @@ export default function Dashboard() {
     const fStore = (row: any) => currentStore === 'ALL' || (row['Franchise Store'] || '').toString().trim() === currentStore;
     const fDate = (row: any) => {
       if (!dateRange.start || !dateRange.end) return true;
-      const bd = (row['Business Date'] || '').toString();
+      const bd = (row['Business Date'] || row['Date'] || '').toString();
       return bd >= dateRange.start && bd <= dateRange.end;
     };
     const f = (row: any) => fStore(row) && fDate(row);
@@ -342,7 +342,7 @@ export default function Dashboard() {
     const dailyVar: { date: string, store: string, val: number }[] = [];
     filteredData.summary.forEach(r => {
       const v = Number(r['Over Short']) || 0;
-      if (v !== 0) dailyVar.push({ date: r['Business Date'], store: (r['Franchise Store'] || '').toString().split('-').pop() || '', val: v });
+      if (v !== 0) dailyVar.push({ date: r['Business Date'] || r['Date'], store: (r['Franchise Store'] || '').toString().split('-').pop() || '', val: v });
     });
     dailyVar.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
@@ -352,7 +352,7 @@ export default function Dashboard() {
     filteredData.summary.forEach(r => {
       const storeNum = (r['Franchise Store'] || '').toString().trim().split('-').pop();
       if (!storeNum) return;
-      const dateMs = new Date(r['Business Date']).getTime();
+      const dateMs = new Date(r['Business Date'] || r['Date']).getTime();
       if (dateMs > weekEndMs) weekEndMs = dateMs;
 
       if (!exportMap[storeNum]) exportMap[storeNum] = { netSales: 0, custCount: 0 };
