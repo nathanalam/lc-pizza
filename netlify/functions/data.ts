@@ -65,6 +65,16 @@ export default async function handler(request: Request) {
       return Response.json({ success: true });
     }
 
+    if (request.method === 'DELETE') {
+      const { dates } = await request.json();
+      if (dates && Array.isArray(dates) && dates.length > 0) {
+        for (const date of dates) {
+          await sql`DELETE FROM daily_reports WHERE business_date = ${date}`;
+        }
+      }
+      return Response.json({ success: true });
+    }
+
     return Response.json({ error: 'Method not allowed' }, { status: 405 });
   } catch (error: any) {
     return Response.json({ error: error.message }, { status: 500 });

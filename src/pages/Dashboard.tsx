@@ -9,6 +9,7 @@ import {
 import { Upload, Database, Loader2, Download, Shield, CalendarIcon, KeyRound } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import ChangePasswordModal from '@/components/ChangePasswordModal';
+import DataUploadWizard from '@/components/DataUploadWizard';
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend, ArcElement);
 
@@ -25,6 +26,7 @@ type StoreManualAdjustment = {
   sga: number;
   payouts: number;
   capex: number;
+  nickname?: string;
 };
 
 type AppState = {
@@ -90,6 +92,7 @@ export default function Dashboard() {
 
   const [dateRange, setDateRange] = useState({ start: '', end: '' });
   const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
+  const [isUploadWizardOpen, setIsUploadWizardOpen] = useState(false);
 
   useEffect(() => {
     fetchData();
@@ -175,6 +178,19 @@ export default function Dashboard() {
     saveAdjustmentsToDB(nextManual);
   };
 
+  const handleStringChange = (key: keyof StoreManualAdjustment, value: string) => {
+    const nextManual = { ...state.manual };
+    if (currentStore === 'ALL') {
+      stores.forEach(s => {
+        if (nextManual[s]) nextManual[s] = { ...nextManual[s], [key]: value };
+      });
+    } else {
+      nextManual[currentStore] = { ...nextManual[currentStore], [key]: value };
+    }
+    setState(prev => ({ ...prev, manual: nextManual }));
+    saveAdjustmentsToDB(nextManual);
+  };
+
   const saveAdjustmentsToDB = async (manualData: Record<string, StoreManualAdjustment>) => {
     try {
       const adjustments = Object.keys(manualData).map(store_id => ({ store_id, data: manualData[store_id] }));
@@ -189,103 +205,7 @@ export default function Dashboard() {
   };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || []);
-    if (files.length === 0) return;
-    setLoading(true);
-
-    let parsed = { summary: [] as any[], items: [] as any[], txns: [] as any[], sales: [] as any[], inventory: [] as any[], invoices: [] as any[], labor: [] as any[] };
-
-    try {
-      for (const file of files) {
-        const buffer = await file.arrayBuffer();
-        const workbook = XLSX.read(buffer, { type: 'array', cellDates: true });
-        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
-        const rows: any[] = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
-
-        const name = file.name.toLowerCase();
-        let headerIdx = -1;
-
-        for (let i = 0; i < Math.min(20, rows.length); i++) {
-          if (!rows[i] || !rows[i].length) continue;
-          if (
-            rows[i].includes('Franchise Store') ||
-            (rows[i].includes('Store Number') && rows[i].includes('Total Pay')) || // Labor
-            (rows[i].includes('Store Number') && rows[i].includes('Invoice Total')) // Invoices
-          ) {
-            headerIdx = i; break;
-          }
-        }
-
-        let data: any[] = [];
-        if (headerIdx !== -1) {
-          const headers = rows[headerIdx];
-          for (let i = headerIdx + 1; i < rows.length; i++) {
-            if (!rows[i] || !rows[i].length) continue;
-            let rowObj: any = {};
-            headers.forEach((header: string, index: number) => {
-              if (header) {
-                let val = rows[i][index];
-                // Handle different date columns
-                const isDateCol = header === 'Business Date' || header === 'Date' || header === 'Applied Delivery Date';
-                if (isDateCol && val instanceof Date) {
-                  val = val.toISOString().split('T')[0];
-                } else if (isDateCol && val) {
-                  try { val = new Date(val).toISOString().split('T')[0]; } catch { }
-                }
-                rowObj[header] = val;
-              }
-            });
-
-            // Standardize store ID
-            if (rowObj['Store Number']) {
-               rowObj['Franchise Store'] = rowObj['Store Number'];
-            }
-            if (rowObj['Franchise Store']) data.push(rowObj);
-          }
-        }
-
-        if (name.includes('items')) parsed.items = data;
-        else if (name.includes('transactions')) parsed.txns = data;
-        else if (name.includes('sales')) parsed.sales = data;
-        else if (name.includes('labor')) parsed.labor = data;
-        else if (name.includes('invoice')) parsed.invoices = data;
-        else if (name.includes('inventory')) parsed.inventory = data;
-        else parsed.summary = data;
-      }
-
-      const dailyMap: Record<string, any> = {};
-      const registerDay = (row: any, type: string) => {
-        const d = row['Business Date'] || row['Date'] || row['Applied Delivery Date'] || '1970-01-01';
-        if (!dailyMap[d]) dailyMap[d] = { business_date: d, data: { summary: [], items: [], txns: [], sales: [], inventory: [], invoices: [], labor: [] } };
-        dailyMap[d].data[type].push(row);
-      };
-
-      parsed.summary.forEach(r => registerDay(r, 'summary'));
-      parsed.items.forEach(r => registerDay(r, 'items'));
-      parsed.txns.forEach(r => registerDay(r, 'txns'));
-      parsed.sales.forEach(r => registerDay(r, 'sales'));
-      parsed.inventory.forEach(r => registerDay(r, 'inventory'));
-      parsed.invoices.forEach(r => registerDay(r, 'invoices'));
-      parsed.labor.forEach(r => registerDay(r, 'labor'));
-
-      const reportsToUpload = Object.values(dailyMap);
-
-      const res = await fetch('/api/data', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reports: reportsToUpload })
-      });
-      if (!res.ok) throw new Error((await res.json()).error);
-
-      toast({ title: 'Upload Successful', description: 'Data processed and saved to database' });
-      await fetchData();
-
-    } catch (err: any) {
-      toast({ title: 'Error processing files', description: err.message, variant: 'destructive' });
-    } finally {
-      setLoading(false);
-      if (e.target) e.target.value = '';
-    }
+    // Replaced by DataUploadWizard
   };
 
   const filteredData = useMemo(() => {
@@ -469,10 +389,10 @@ export default function Dashboard() {
     const topProducts = Object.entries(pMix).sort((a, b) => b[1].rev - a[1].rev).slice(0, 100).map(([item, d]) => ({ item, ...d }));
 
     // Variance
-    const dailyVar: { date: string, store: string, val: number }[] = [];
+    const dailyVar: { date: string, storeId: string, val: number }[] = [];
     filteredData.summary.forEach(r => {
       const v = Number(r['Over Short']) || 0;
-      if (v !== 0) dailyVar.push({ date: r['Business Date'] || r['Date'], store: (r['Franchise Store'] || '').toString().split('-').pop() || '', val: v });
+      if (v !== 0) dailyVar.push({ date: r['Business Date'] || r['Date'], storeId: (r['Franchise Store'] || '').toString().trim(), val: v });
     });
     dailyVar.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
@@ -522,261 +442,257 @@ export default function Dashboard() {
   };
 
   return (
-    <div className="min-h-screen p-6 bg-background text-foreground font-sans">
-      <div className="max-w-[1400px] mx-auto space-y-6">
+    <>
+      <div className="min-h-screen p-6 bg-background text-foreground font-sans">
+        <div className="max-w-[1400px] mx-auto space-y-6">
+          {/* Main Dashboard Content below... */}
+          <div className="hidden">Placeholder</div>
+          {/* I will keep the actual return contents below unmodified by making sure I skip closing div tag properly */}
 
-        {/* Header Section */}
-        <header className="bg-card border border-border p-6 rounded-2xl flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4 shadow-lg shadow-black/20">
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight text-foreground flex items-center gap-2">Operations & P&L Dashboard</h1>
-            <p className="text-sm text-muted-foreground mt-1">Aggregating raw LCE Gateway exports with period-based manual adjustments.</p>
-          </div>
+          {/* Header Section */}
+          <header className="bg-card border border-border p-6 rounded-2xl flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4 shadow-lg shadow-black/20">
+            <div>
+              <h1 className="text-2xl font-bold tracking-tight text-foreground flex items-center gap-2">Operations & P&L Dashboard</h1>
+              <p className="text-sm text-muted-foreground mt-1">Aggregating raw LCE Gateway exports with period-based manual adjustments.</p>
+            </div>
 
-          <div className="flex flex-wrap gap-3 w-full xl:w-auto flex-col sm:flex-row items-center">
-            {user?.is_admin && (
-              <button onClick={() => navigate('/admin')} className="flex items-center gap-2 text-sm font-medium text-primary hover:text-primary/80 transition-colors mr-2 whitespace-nowrap">
-                <Shield className="w-4 h-4" /> Admin Panel
+            <div className="flex flex-wrap gap-3 w-full xl:w-auto flex-col sm:flex-row items-center">
+              {user?.is_admin && (
+                <button onClick={() => navigate('/admin')} className="flex items-center gap-2 text-sm font-medium text-primary hover:text-primary/80 transition-colors mr-2 whitespace-nowrap">
+                  <Shield className="w-4 h-4" /> Admin Panel
+                </button>
+              )}
+              <button
+                onClick={() => setIsPasswordModalOpen(true)}
+                className="flex items-center gap-1.5 text-muted-foreground hover:text-foreground text-sm mr-2 transition-colors whitespace-nowrap"
+              >
+                <KeyRound className="w-4 h-4" /> Change Password
               </button>
-            )}
-            <button
-              onClick={() => setIsPasswordModalOpen(true)}
-              className="flex items-center gap-1.5 text-muted-foreground hover:text-foreground text-sm mr-2 transition-colors whitespace-nowrap"
-            >
-              <KeyRound className="w-4 h-4" /> Change Password
-            </button>
-            <button onClick={logout} className="text-muted-foreground hover:text-foreground text-sm mr-2 transition-colors whitespace-nowrap">Sign out ({user?.email})</button>
+              <button onClick={logout} className="text-muted-foreground hover:text-foreground text-sm mr-2 transition-colors whitespace-nowrap">Sign out ({user?.email})</button>
 
-            {/* Date Filters */}
-            <div className="flex items-center gap-2 bg-background border border-border rounded-lg px-2 py-1.5 focus-within:border-blue-500 min-w-[300px]">
-              <CalendarIcon className="w-4 h-4 text-muted-foreground ml-1" />
-              <input type="date" value={dateRange.start} onChange={e => setDateRange(prev => ({ ...prev, start: e.target.value }))} className="bg-transparent text-sm text-foreground focus:outline-none w-full cursor-pointer" />
-              <span className="text-muted-foreground">-</span>
-              <input type="date" value={dateRange.end} onChange={e => setDateRange(prev => ({ ...prev, end: e.target.value }))} className="bg-transparent text-sm text-foreground focus:outline-none w-full cursor-pointer" />
-            </div>
-
-            {user?.is_admin && (
-              <label className="cursor-pointer bg-primary/10 hover:bg-primary/20 text-primary transition-colors px-4 py-2 rounded-lg border border-primary/20 flex items-center gap-2 text-sm font-medium whitespace-nowrap">
-                {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
-                {loading ? 'Processing...' : 'Upload Excel Files'}
-                <input type="file" multiple accept=".xlsx,.csv" className="hidden" onChange={handleFileUpload} />
-              </label>
-            )}
-            <select
-              value={currentStore}
-              onChange={e => setCurrentStore(e.target.value)}
-              className="bg-secondary border border-border rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-primary"
-            >
-              <option value="ALL">All Stores (Aggregate)</option>
-              {stores.map(s => <option key={s} value={s}>Store {s.split('-').pop()}</option>)}
-            </select>
-          </div>
-        </header>
-
-        {dataLoading && state.raw.summary.length === 0 && state.raw.labor.length === 0 && state.raw.invoices.length === 0 && state.raw.inventory.length === 0 ? (
-          <div className="bg-card border border-border p-12 rounded-2xl text-center flex flex-col items-center">
-            <Loader2 className="w-8 h-8 text-primary animate-spin mb-4" />
-            <p className="text-muted-foreground">Loading historical data from database...</p>
-          </div>
-        ) : state.raw.summary.length === 0 && state.raw.labor.length === 0 && state.raw.invoices.length === 0 && state.raw.inventory.length === 0 ? (
-          <div className="bg-card border border-border border-dashed p-12 rounded-2xl text-center">
-            <Database className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
-            <p className="text-muted-foreground">
-              {user?.is_admin 
-                ? 'Database is empty. Upload LCE Gateway and Altametrics files.'
-                : 'Database is empty. Please contact an administrator to upload data.'}
-            </p>
-          </div>
-        ) : (
-          <div className="space-y-6">
-
-            {/* KPI Cards */}
-            <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
-              {[
-                { label: 'Gross Sales', val: formatCur(stats.tGross) },
-                { label: 'Net Sales', val: formatCur(stats.tNet) },
-                { label: 'Operating Profit', val: formatCur(stats.opProfit), textStyle: stats.opProfit >= 0 ? 'text-green-800' : 'text-rose-400', bdr: 'border-t-2 border-primary' },
-                { label: 'Total Transactions', val: stats.tTxns.toLocaleString() },
-                { label: 'Over/Short', val: formatCur(stats.tVar), textStyle: stats.tVar < 0 ? 'text-rose-400' : 'text-foreground' }
-              ].map((k, i) => (
-                <div key={i} className={`bg-card border border-border p-5 rounded-2xl shadow-lg ${k.bdr || ''}`}>
-                  <p className="text-sm text-muted-foreground font-medium">{k.label}</p>
-                  <h2 className={`text-2xl font-bold mt-1 ${k.textStyle || 'text-foreground'}`}>{k.val}</h2>
-                </div>
-              ))}
-            </div>
-
-            <div className="grid grid-cols-1 xl:grid-cols-4 gap-6">
-
-              {/* P&L Reconstruction */}
-              <div className="bg-card border border-border p-5 rounded-2xl flex flex-col shadow-lg">
-                <h3 className="text-sm font-bold text-foreground uppercase tracking-wider mb-4">P&L Summary</h3>
-                <div className="space-y-2 text-sm flex-1">
-                  <div className="flex justify-between text-foreground"><span>Gross Sales</span><span>{formatCur(stats.tGross)}</span></div>
-                  <div className="flex justify-between text-muted-foreground"><span>Sales Tax</span><span className="text-rose-400">-{formatCur(stats.tTax)}</span></div>
-                  <div className="flex justify-between font-bold text-foreground border-b border-border pb-2"><span>Net Sales</span><span>{formatCur(stats.tNet)}</span></div>
-
-                  {[
-                    { l: stats.isCogsEstimated ? 'COGS (Est. 28%)' : 'COGS (Actual)', v: stats.cogs },
-                    ...(stats.laborCost > 0 ? [{ l: 'Labor', v: stats.laborCost }] : []),
-                    { l: stats.isDelEstimated ? `3rd Party Del. Fees (Est. ${DEL_EST_PCT * 100}%)` : '3rd Party Del. Fees (Actual)', v: stats.mDel },
-                    { l: 'Franchise & Ad Fees', v: stats.mRoy },
-                    { l: 'Rent', v: stats.mRent },
-                    { l: 'Utilities', v: stats.mUtil },
-                    { l: 'Maintenance', v: stats.mMaint },
-                    { l: 'Admin / SG&A', v: stats.mSga },
-                    { l: 'Cash Payouts', v: stats.mPayouts },
-                    { l: 'Capex', v: stats.mCapex, br: true },
-                  ].map((row, i) => (
-                    <div key={i} className={`flex justify-between text-muted-foreground ${row.br ? 'border-b border-border pb-2' : ''}`}>
-                      <span>{row.l}</span><span className="text-rose-400">-{formatCur(row.v)}</span>
-                    </div>
-                  ))}
-
-                  <div className="flex justify-between font-bold pt-1 text-base">
-                    <span>Operating Profit</span><span className={stats.opProfit >= 0 ? "text-green-800" : "text-rose-400"}>{formatCur(stats.opProfit)}</span>
-                  </div>
-                  <div className="flex justify-between text-muted-foreground text-xs mt-1"><span>OP Margin</span><span>{stats.margin.toFixed(1)}%</span></div>
-                </div>
+              {/* Date Filters */}
+              <div className="flex items-center gap-2 bg-background border border-border rounded-lg px-2 py-1.5 focus-within:border-blue-500 min-w-[300px]">
+                <CalendarIcon className="w-4 h-4 text-muted-foreground ml-1" />
+                <input type="date" value={dateRange.start} onChange={e => setDateRange(prev => ({ ...prev, start: e.target.value }))} className="bg-transparent text-sm text-foreground focus:outline-none w-full cursor-pointer" />
+                <span className="text-muted-foreground">-</span>
+                <input type="date" value={dateRange.end} onChange={e => setDateRange(prev => ({ ...prev, end: e.target.value }))} className="bg-transparent text-sm text-foreground focus:outline-none w-full cursor-pointer" />
               </div>
 
-              {/* Manual Edits */}
-              <div className="bg-card border border-border p-5 rounded-2xl flex flex-col shadow-lg xl:col-span-1">
-                <div className="flex flex-col gap-1 mb-4">
-                  <h3 className="text-sm font-bold text-foreground uppercase tracking-wider">Manual Adjustments</h3>
-                  <p className="text-xs text-primary italic">
-                    {currentStore === 'ALL' ? 'Apply baseline to ALL stores' : `Adjusting Store ${currentStore.split('-').pop()}`}
-                  </p>
-                </div>
-
-                {stats.effectiveDelPct !== null && (
-                  <div className="flex justify-between items-center text-sm mb-2 pb-2 border-b border-border">
-                    <span className="text-muted-foreground">Eff. Delivery Commission</span>
-                    <span className="font-medium text-foreground">{stats.effectiveDelPct.toFixed(1)}%</span>
-                  </div>
-                )}
-
-                <div className="space-y-4">
-                  {[
-                    { l: 'Rent ($)', k: 'rent', w: 24, p: 1000 },
-                    { l: 'Utilities ($)', k: 'util', w: 24, p: 300 },
-                    { l: 'Maintenance ($)', k: 'maint', w: 24, p: 75 },
-                    { l: 'Admin/SG&A ($)', k: 'sga', w: 24, p: 125 },
-                    { l: 'Cash Payouts ($)', k: 'payouts', w: 24, p: 0 },
-                    { l: 'Capex ($)', k: 'capex', w: 24, p: 0 },
-                  ].map((f: any, i) => f.sep ? <hr key={i} className="border-border" /> : (
-                    <div key={i} className="flex justify-between items-center">
-                      <label className="text-sm text-muted-foreground">{f.l}</label>
-                      <ManualInput
-                        key={`${currentStore}-${f.k}`}
-                        value={currentStore === 'ALL' ? '' : (activeManual[f.k as keyof StoreManualAdjustment] ?? '')}
-                        onChange={val => handleManualChange(f.k as keyof StoreManualAdjustment, val)}
-                        placeholder={(f.p).toString()}
-                        className={`bg-background border border-border rounded px-2 py-1 w-${f.w} text-right text-foreground text-sm focus:outline-none focus:border-primary`}
-                      />
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Charts Space */}
-              <div className="bg-card border border-border p-5 rounded-2xl flex flex-col xl:col-span-2 shadow-lg">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 h-full">
-                  <div className="flex flex-col">
-                    <h3 className="text-sm font-bold text-foreground uppercase tracking-wider mb-4">Channel Breakdown</h3>
-                    <div className="flex-1 min-h-[250px] flex items-center justify-center border border-dashed border-border rounded-xl relative p-4">
-                      {(stats.carryout > 0 || stats.delivery > 0) ? (
-                        <Doughnut
-                          data={{
-                            labels: ['Carryout', 'Delivery'],
-                            datasets: [{ data: [stats.carryout, stats.delivery], backgroundColor: ['#3b82f6', '#8b5cf6'], borderWidth: 0 }]
-                          }}
-                          options={{ maintainAspectRatio: false, plugins: { legend: { position: 'right', labels: { color: '#cbd5e1' } } } }}
-                        />
-                      ) : (
-                        <p className="text-muted-foreground text-sm italic">No channel data in this range</p>
-                      )}
-                    </div>
-                  </div>
-                  <div className="flex flex-col">
-                    <h3 className="text-sm font-bold text-foreground uppercase tracking-wider mb-4">Payment Reliance</h3>
-                    <div className="flex-1 min-h-[250px] flex items-center justify-center border border-dashed border-border rounded-xl relative p-4">
-                      {Object.keys(stats.payMap).length > 0 ? (
-                        <Bar
-                          data={{
-                            labels: Object.keys(stats.payMap),
-                            datasets: [{ data: Object.values(stats.payMap), backgroundColor: '#10b981' }]
-                          }}
-                          options={{ indexAxis: 'y', plugins: { legend: { display: false } }, maintainAspectRatio: false, scales: { x: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8' } }, y: { ticks: { color: '#94a3b8' } } } }}
-                        />
-                      ) : (
-                        <p className="text-muted-foreground text-sm italic">No payment data in this range</p>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              </div>
+              {user?.is_admin && (
+                <>
+                  <button
+                    onClick={() => navigate('/data')}
+                    className="bg-secondary/50 hover:bg-secondary text-foreground text-sm font-medium transition-colors px-4 py-2 rounded-lg border border-border flex items-center gap-2 whitespace-nowrap"
+                  >
+                    <Database className="w-4 h-4" /> Manage Data
+                  </button>
+                  <button
+                    onClick={() => setIsUploadWizardOpen(true)}
+                    className="bg-primary/10 hover:bg-primary/20 text-primary transition-colors px-4 py-2 rounded-lg border border-primary/20 flex items-center gap-2 text-sm font-medium whitespace-nowrap"
+                  >
+                    <Upload className="w-4 h-4" /> Upload Excel Files
+                  </button>
+                </>
+              )}
+              <select
+                value={currentStore}
+                onChange={e => setCurrentStore(e.target.value)}
+                className="bg-secondary border border-border rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-primary max-w-[200px]"
+              >
+                <option value="ALL">All Stores (Aggregate)</option>
+                {stores.map(s => <option key={s} value={s}>{state.manual[s]?.nickname || `Store ${s.split('-').pop()}`}</option>)}
+              </select>
             </div>
+          </header>
 
-            {/* Full Store Breakdown */}
-            <div className="bg-card border border-border p-5 rounded-2xl flex flex-col overflow-hidden shadow-lg mt-6">
-              <h3 className="text-sm font-bold text-foreground uppercase tracking-wider mb-4">Individual Store Financial Mix</h3>
-              <div className="overflow-x-auto relative">
-                <table className="w-full text-sm text-left whitespace-nowrap">
-                  <thead className="text-xs text-muted-foreground uppercase bg-background/50">
-                    <tr>
-                      <th className="px-4 py-3 rounded-tl-lg">Store</th>
-                      <th className="px-4 py-3 text-right">Net Sales</th>
-                      <th className="px-4 py-3 text-right">COGS</th>
-                      {stats.laborCost > 0 && <th className="px-4 py-3 text-right">Labor</th>}
-                      <th className="px-4 py-3 text-right">3rd Pty Fees</th>
-                      <th className="px-4 py-3 text-right">Fran. Fee</th>
-                      <th className="px-4 py-3 text-right">Rent/Util</th>
-                      <th className="px-4 py-3 text-right">Other Exp</th>
-                      <th className="px-4 py-3 text-right text-primary">Op Profit</th>
-                      <th className="px-4 py-3 text-right rounded-tr-lg">Margin</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-800/60">
-                    {stats.storeMix.map(row => (
-                      <tr key={row.s} className={`hover:bg-muted/50 transition border-l-2 ${row.s === currentStore ? 'border-blue-500 bg-muted' : 'border-transparent'}`}>
-                        <td className="px-4 py-2 font-medium">Store {row.s.split('-').pop()}</td>
-                        <td className="px-4 py-2 text-right">{formatCur(row.net)}</td>
-                        <td className="px-4 py-2 text-right">{formatCur(row.cogs)}</td>
-                        {stats.laborCost > 0 && <td className="px-4 py-2 text-right">{formatCur(row.labor)}</td>}
-                        <td className="px-4 py-2 text-right text-rose-400">{formatCur(row.delFee)}</td>
-                        <td className="px-4 py-2 text-right">{formatCur(row.royaltyFee)}</td>
-                        <td className="px-4 py-2 text-right">{formatCur(row.rentUtil)}</td>
-                        <td className="px-4 py-2 text-right">{formatCur(row.otherExp)}</td>
-                        <td className={`px-4 py-2 text-right font-bold ${row.op >= 0 ? 'text-green-800' : 'text-rose-400'}`}>{formatCur(row.op)}</td>
-                        <td className="px-4 py-2 text-right text-muted-foreground">{row.marg}%</td>
-                      </tr>
+          {dataLoading && state.raw.summary.length === 0 && state.raw.labor.length === 0 && state.raw.invoices.length === 0 && state.raw.inventory.length === 0 ? (
+            <div className="bg-card border border-border p-12 rounded-2xl text-center flex flex-col items-center">
+              <Loader2 className="w-8 h-8 text-primary animate-spin mb-4" />
+              <p className="text-muted-foreground">Loading historical data from database...</p>
+            </div>
+          ) : state.raw.summary.length === 0 && state.raw.labor.length === 0 && state.raw.invoices.length === 0 && state.raw.inventory.length === 0 ? (
+            <div className="bg-card border border-border border-dashed p-12 rounded-2xl text-center">
+              <Database className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
+              <p className="text-muted-foreground">
+                {user?.is_admin
+                  ? 'Database is empty. Upload LCE Gateway and Altametrics files.'
+                  : 'Database is empty. Please contact an administrator to upload data.'}
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-6">
+
+              {/* KPI Cards */}
+              <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+                {[
+                  { label: 'Gross Sales', val: formatCur(stats.tGross) },
+                  { label: 'Net Sales', val: formatCur(stats.tNet) },
+                  { label: 'Operating Profit', val: formatCur(stats.opProfit), textStyle: stats.opProfit >= 0 ? 'text-green-800' : 'text-rose-400', bdr: 'border-t-2 border-primary' },
+                  { label: 'Total Transactions', val: stats.tTxns.toLocaleString() },
+                  { label: 'Over/Short', val: formatCur(stats.tVar), textStyle: stats.tVar < 0 ? 'text-rose-400' : 'text-foreground' }
+                ].map((k, i) => (
+                  <div key={i} className={`bg-card border border-border p-5 rounded-2xl shadow-lg ${k.bdr || ''}`}>
+                    <p className="text-sm text-muted-foreground font-medium">{k.label}</p>
+                    <h2 className={`text-2xl font-bold mt-1 ${k.textStyle || 'text-foreground'}`}>{k.val}</h2>
+                  </div>
+                ))}
+              </div>
+
+              <div className="grid grid-cols-1 xl:grid-cols-4 gap-6">
+
+                {/* P&L Reconstruction */}
+                <div className="bg-card border border-border p-5 rounded-2xl flex flex-col shadow-lg">
+                  <h3 className="text-sm font-bold text-foreground uppercase tracking-wider mb-4">P&L Summary</h3>
+                  <div className="space-y-2 text-sm flex-1">
+                    <div className="flex justify-between text-foreground"><span>Gross Sales</span><span>{formatCur(stats.tGross)}</span></div>
+                    <div className="flex justify-between text-muted-foreground"><span>Sales Tax</span><span className="text-rose-400">-{formatCur(stats.tTax)}</span></div>
+                    <div className="flex justify-between font-bold text-foreground border-b border-border pb-2"><span>Net Sales</span><span>{formatCur(stats.tNet)}</span></div>
+
+                    {[
+                      { l: stats.isCogsEstimated ? 'COGS (Est. 28%)' : 'COGS (Actual)', v: stats.cogs },
+                      ...(stats.laborCost > 0 ? [{ l: 'Labor', v: stats.laborCost }] : []),
+                      { l: stats.isDelEstimated ? `3rd Party Del. Fees (Est. ${DEL_EST_PCT * 100}%)` : '3rd Party Del. Fees (Actual)', v: stats.mDel },
+                      { l: 'Franchise & Ad Fees', v: stats.mRoy },
+                      { l: 'Rent', v: stats.mRent },
+                      { l: 'Utilities', v: stats.mUtil },
+                      { l: 'Maintenance', v: stats.mMaint },
+                      { l: 'Admin / SG&A', v: stats.mSga },
+                      { l: 'Cash Payouts', v: stats.mPayouts },
+                      { l: 'Capex', v: stats.mCapex, br: true },
+                    ].map((row, i) => (
+                      <div key={i} className={`flex justify-between text-muted-foreground ${row.br ? 'border-b border-border pb-2' : ''}`}>
+                        <span>{row.l}</span><span className="text-rose-400">-{formatCur(row.v)}</span>
+                      </div>
                     ))}
-                  </tbody>
-                </table>
+
+                    <div className="flex justify-between font-bold pt-1 text-base">
+                      <span>Operating Profit</span><span className={stats.opProfit >= 0 ? "text-green-800" : "text-rose-400"}>{formatCur(stats.opProfit)}</span>
+                    </div>
+                    <div className="flex justify-between text-muted-foreground text-xs mt-1"><span>OP Margin</span><span>{stats.margin.toFixed(1)}%</span></div>
+                  </div>
+                </div>
+
+                <div className="bg-card border border-border p-5 rounded-2xl flex flex-col shadow-lg xl:col-span-1">
+                  <div className="flex flex-col gap-1 mb-4">
+                    <h3 className="text-sm font-bold text-foreground uppercase tracking-wider">Manual Adjustments</h3>
+                    <p className="text-xs text-primary italic">
+                      {currentStore === 'ALL' ? 'Apply baseline to ALL stores' : `Adjusting ${state.manual[currentStore]?.nickname || ('Store ' + currentStore.split('-').pop())}`}
+                    </p>
+                  </div>
+
+                  <div className="flex justify-between items-center text-sm mb-4 pb-4 border-b border-border">
+                    <label className="text-sm font-bold text-muted-foreground mr-4 whitespace-nowrap">Store Nickname</label>
+                    <input
+                      type="text"
+                      value={currentStore === 'ALL' ? '' : (activeManual.nickname || '')}
+                      onChange={e => handleStringChange('nickname', e.target.value)}
+                      placeholder={currentStore === 'ALL' ? 'Select a specific store' : 'e.g. Odenton'}
+                      disabled={currentStore === 'ALL'}
+                      className="bg-background border border-border rounded px-2 py-1.5 w-full text-right text-foreground text-sm focus:outline-none focus:border-primary disabled:opacity-50"
+                    />
+                  </div>
+
+                  {stats.effectiveDelPct !== null && (
+                    <div className="flex justify-between items-center text-sm mb-2 pb-2 border-b border-border">
+                      <span className="text-muted-foreground">Eff. Delivery Commission</span>
+                      <span className="font-medium text-foreground">{stats.effectiveDelPct.toFixed(1)}%</span>
+                    </div>
+                  )}
+
+                  <div className="space-y-4">
+                    {[
+                      { l: 'Rent ($)', k: 'rent', w: 24, p: 1000 },
+                      { l: 'Utilities ($)', k: 'util', w: 24, p: 300 },
+                      { l: 'Maintenance ($)', k: 'maint', w: 24, p: 75 },
+                      { l: 'Admin/SG&A ($)', k: 'sga', w: 24, p: 125 },
+                      { l: 'Cash Payouts ($)', k: 'payouts', w: 24, p: 0 },
+                      { l: 'Capex ($)', k: 'capex', w: 24, p: 0 },
+                    ].map((f: any, i) => f.sep ? <hr key={i} className="border-border" /> : (
+                      <div key={i} className="flex justify-between items-center">
+                        <label className="text-sm text-muted-foreground">{f.l}</label>
+                        <ManualInput
+                          key={`${currentStore}-${f.k}`}
+                          value={currentStore === 'ALL' ? '' : (activeManual[f.k as keyof StoreManualAdjustment] ?? '')}
+                          onChange={val => handleManualChange(f.k as keyof StoreManualAdjustment, val)}
+                          placeholder={(f.p).toString()}
+                          className={`bg-background border border-border rounded px-2 py-1 w-${f.w} text-right text-foreground text-sm focus:outline-none focus:border-primary`}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Charts Space */}
+                <div className="bg-card border border-border p-5 rounded-2xl flex flex-col xl:col-span-2 shadow-lg">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6 h-full">
+                    <div className="flex flex-col">
+                      <h3 className="text-sm font-bold text-foreground uppercase tracking-wider mb-4">Channel Breakdown</h3>
+                      <div className="flex-1 min-h-[250px] flex items-center justify-center border border-dashed border-border rounded-xl relative p-4">
+                        {(stats.carryout > 0 || stats.delivery > 0) ? (
+                          <Doughnut
+                            data={{
+                              labels: ['Carryout', 'Delivery'],
+                              datasets: [{ data: [stats.carryout, stats.delivery], backgroundColor: ['#3b82f6', '#8b5cf6'], borderWidth: 0 }]
+                            }}
+                            options={{ maintainAspectRatio: false, plugins: { legend: { position: 'right', labels: { color: '#000000' } } } }}
+                          />
+                        ) : (
+                          <p className="text-muted-foreground text-sm italic">No channel data in this range</p>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex flex-col">
+                      <h3 className="text-sm font-bold text-foreground uppercase tracking-wider mb-4">Payment Reliance</h3>
+                      <div className="flex-1 min-h-[250px] flex items-center justify-center border border-dashed border-border rounded-xl relative p-4">
+                        {Object.keys(stats.payMap).length > 0 ? (
+                          <Bar
+                            data={{
+                              labels: Object.keys(stats.payMap),
+                              datasets: [{ data: Object.values(stats.payMap), backgroundColor: '#10b981' }]
+                            }}
+                            options={{ indexAxis: 'y', plugins: { legend: { display: false } }, maintainAspectRatio: false, scales: { x: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8' } }, y: { ticks: { color: '#94a3b8' } } } }}
+                          />
+                        ) : (
+                          <p className="text-muted-foreground text-sm italic">No payment data in this range</p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
               </div>
-            </div>
 
-            {/* Additional Tables Row */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-
-              {/* Product Mix */}
-              <div className="bg-card border border-border p-5 rounded-2xl flex flex-col shadow-lg max-h-[500px]">
-                <h3 className="text-sm font-bold text-foreground uppercase tracking-wider mb-4">Product Mix (Top 100)</h3>
-                <div className="overflow-y-auto pr-2 custom-scrollbar">
+              {/* Full Store Breakdown */}
+              <div className="bg-card border border-border p-5 rounded-2xl flex flex-col overflow-hidden shadow-lg mt-6">
+                <h3 className="text-sm font-bold text-foreground uppercase tracking-wider mb-4">Individual Store Financial Mix</h3>
+                <div className="overflow-x-auto relative">
                   <table className="w-full text-sm text-left whitespace-nowrap">
-                    <thead className="text-xs text-muted-foreground uppercase bg-background/50 sticky top-0">
+                    <thead className="text-xs text-muted-foreground uppercase bg-background/50">
                       <tr>
-                        <th className="px-4 py-3 rounded-tl-lg">Item</th>
-                        <th className="px-4 py-3 text-right">Qty</th>
-                        <th className="px-4 py-3 text-right rounded-tr-lg">Gross Rev</th>
+                        <th className="px-4 py-3 rounded-tl-lg">Store</th>
+                        <th className="px-4 py-3 text-right">Net Sales</th>
+                        <th className="px-4 py-3 text-right">COGS</th>
+                        {stats.laborCost > 0 && <th className="px-4 py-3 text-right">Labor</th>}
+                        <th className="px-4 py-3 text-right">3rd Pty Fees</th>
+                        <th className="px-4 py-3 text-right">Fran. Fee</th>
+                        <th className="px-4 py-3 text-right">Rent/Util</th>
+                        <th className="px-4 py-3 text-right">Other Exp</th>
+                        <th className="px-4 py-3 text-right text-primary">Op Profit</th>
+                        <th className="px-4 py-3 text-right rounded-tr-lg">Margin</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-800/60">
-                      {stats.topProducts.map(p => (
-                        <tr key={p.item} className="hover:bg-muted/50 transition">
-                          <td className="px-4 py-2">{p.item}</td>
-                          <td className="px-4 py-2 text-right">{Math.round(p.qty)}</td>
-                          <td className="px-4 py-2 text-right font-medium">{formatCur(p.rev)}</td>
+                      {stats.storeMix.map(row => (
+                        <tr key={row.s} className={`hover:bg-muted/50 transition border-l-2 ${row.s === currentStore ? 'border-blue-500 bg-muted' : 'border-transparent'}`}>
+                          <td className="px-4 py-2 font-medium">{state.manual[row.s]?.nickname || `Store ${row.s.split('-').pop()}`}</td>
+                          <td className="px-4 py-2 text-right">{formatCur(row.net)}</td>
+                          <td className="px-4 py-2 text-right">{formatCur(row.cogs)}</td>
+                          {stats.laborCost > 0 && <td className="px-4 py-2 text-right">{formatCur(row.labor)}</td>}
+                          <td className="px-4 py-2 text-right text-rose-400">{formatCur(row.delFee)}</td>
+                          <td className="px-4 py-2 text-right">{formatCur(row.royaltyFee)}</td>
+                          <td className="px-4 py-2 text-right">{formatCur(row.rentUtil)}</td>
+                          <td className="px-4 py-2 text-right">{formatCur(row.otherExp)}</td>
+                          <td className={`px-4 py-2 text-right font-bold ${row.op >= 0 ? 'text-green-800' : 'text-rose-400'}`}>{formatCur(row.op)}</td>
+                          <td className="px-4 py-2 text-right text-muted-foreground">{row.marg}%</td>
                         </tr>
                       ))}
                     </tbody>
@@ -784,80 +700,111 @@ export default function Dashboard() {
                 </div>
               </div>
 
-              {/* Variance & Export Section */}
-              <div className="flex flex-col gap-6">
-                {/* Daily Variance */}
-                <div className="bg-card border border-border p-5 rounded-2xl flex flex-col shadow-lg max-h-[300px]">
-                  <h3 className="text-sm font-bold text-foreground uppercase tracking-wider mb-4">Daily Cash Variance</h3>
+              {/* Additional Tables Row */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+                {/* Product Mix */}
+                <div className="bg-card border border-border p-5 rounded-2xl flex flex-col shadow-lg max-h-[500px]">
+                  <h3 className="text-sm font-bold text-foreground uppercase tracking-wider mb-4">Product Mix (Top 100)</h3>
                   <div className="overflow-y-auto pr-2 custom-scrollbar">
                     <table className="w-full text-sm text-left whitespace-nowrap">
                       <thead className="text-xs text-muted-foreground uppercase bg-background/50 sticky top-0">
                         <tr>
-                          <th className="px-4 py-3 rounded-tl-lg">Date</th>
-                          <th className="px-4 py-3">Store</th>
-                          <th className="px-4 py-3 text-right rounded-tr-lg">Over/Short</th>
+                          <th className="px-4 py-3 rounded-tl-lg">Item</th>
+                          <th className="px-4 py-3 text-right">Qty</th>
+                          <th className="px-4 py-3 text-right rounded-tr-lg">Gross Rev</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-800/60">
-                        {stats.dailyVar.map((v, i) => (
-                          <tr key={i} className="hover:bg-muted/50 transition">
-                            <td className="px-4 py-2 text-muted-foreground">{v.date}</td>
-                            <td className="px-4 py-2">{v.store}</td>
-                            <td className={`px-4 py-2 text-right font-medium ${v.val < -0 ? 'text-rose-400' : 'text-foreground'}`}>{formatCur(v.val)}</td>
+                        {stats.topProducts.map(p => (
+                          <tr key={p.item} className="hover:bg-muted/50 transition">
+                            <td className="px-4 py-2">{p.item}</td>
+                            <td className="px-4 py-2 text-right">{Math.round(p.qty)}</td>
+                            <td className="px-4 py-2 text-right font-medium">{formatCur(p.rev)}</td>
                           </tr>
                         ))}
-                        {stats.dailyVar.length === 0 && (
-                          <tr><td colSpan={3} className="px-4 py-8 text-center text-muted-foreground">No variance found in this range.</td></tr>
-                        )}
                       </tbody>
                     </table>
                   </div>
                 </div>
 
-                {/* Weekly Sales Export Table */}
-                <div className="bg-card border border-border p-5 rounded-2xl flex flex-col shadow-lg">
-                  <div className="flex justify-between items-center mb-4">
-                    <h3 className="text-sm font-bold text-foreground uppercase tracking-wider">Weekly Sales Export</h3>
-                    <button onClick={handleExportCSV} className="bg-primary/20 hover:bg-primary/30 text-primary transition-colors px-3 py-1.5 rounded-lg text-sm font-medium flex items-center gap-2 border border-primary/20">
-                      <Download className="w-4 h-4" /> Export CSV
-                    </button>
-                  </div>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm text-left whitespace-nowrap">
-                      <thead className="text-xs text-muted-foreground uppercase bg-background/50">
-                        <tr>
-                          <th className="px-4 py-3 rounded-tl-lg">Fran. Number</th>
-                          <th className="px-4 py-3">Store</th>
-                          <th className="px-4 py-3">Week End Date</th>
-                          <th className="px-4 py-3 text-right">Weekly Sales</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-800/60">
-                        {stats.exportRows.map(r => (
-                          <tr key={r.s} className="hover:bg-muted/50 transition">
-                            <td className="px-4 py-2">3659</td>
-                            <td className="px-4 py-2">{r.s}</td>
-                            <td className="px-4 py-2 text-muted-foreground">{r.weekEndDateStr}</td>
-                            <td className="px-4 py-2 text-right font-medium">{formatCur(r.netSales)}</td>
+                {/* Variance & Export Section */}
+                <div className="flex flex-col gap-6">
+                  {/* Daily Variance */}
+                  <div className="bg-card border border-border p-5 rounded-2xl flex flex-col shadow-lg max-h-[300px]">
+                    <h3 className="text-sm font-bold text-foreground uppercase tracking-wider mb-4">Daily Cash Variance</h3>
+                    <div className="overflow-y-auto pr-2 custom-scrollbar">
+                      <table className="w-full text-sm text-left whitespace-nowrap">
+                        <thead className="text-xs text-muted-foreground uppercase bg-background/50 sticky top-0">
+                          <tr>
+                            <th className="px-4 py-3 rounded-tl-lg">Date</th>
+                            <th className="px-4 py-3">Store</th>
+                            <th className="px-4 py-3 text-right rounded-tr-lg">Over/Short</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                        </thead>
+                        <tbody className="divide-y divide-slate-800/60">
+                          {stats.dailyVar.map((v, i) => (
+                            <tr key={i} className="hover:bg-muted/50 transition">
+                              <td className="px-4 py-2 text-muted-foreground">{v.date}</td>
+                              <td className="px-4 py-2">{state.manual[v.storeId]?.nickname || `Store ${v.storeId.split('-').pop()}`}</td>
+                              <td className={`px-4 py-2 text-right font-medium ${v.val < -0 ? 'text-rose-400' : 'text-foreground'}`}>{formatCur(v.val)}</td>
+                            </tr>
+                          ))}
+                          {stats.dailyVar.length === 0 && (
+                            <tr><td colSpan={3} className="px-4 py-8 text-center text-muted-foreground">No variance found in this range.</td></tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  {/* Weekly Sales Export Table */}
+                  <div className="bg-card border border-border p-5 rounded-2xl flex flex-col shadow-lg">
+                    <div className="flex justify-between items-center mb-4">
+                      <h3 className="text-sm font-bold text-foreground uppercase tracking-wider">Weekly Sales Export</h3>
+                      <button onClick={handleExportCSV} className="bg-primary/20 hover:bg-primary/30 text-primary transition-colors px-3 py-1.5 rounded-lg text-sm font-medium flex items-center gap-2 border border-primary/20">
+                        <Download className="w-4 h-4" /> Export CSV
+                      </button>
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm text-left whitespace-nowrap">
+                        <thead className="text-xs text-muted-foreground uppercase bg-background/50">
+                          <tr>
+                            <th className="px-4 py-3 rounded-tl-lg">Fran. Number</th>
+                            <th className="px-4 py-3">Store</th>
+                            <th className="px-4 py-3">Week End Date</th>
+                            <th className="px-4 py-3 text-right">Weekly Sales</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-800/60">
+                          {stats.exportRows.map(r => (
+                            <tr key={r.s} className="hover:bg-muted/50 transition">
+                              <td className="px-4 py-2">3659</td>
+                              <td className="px-4 py-2">{state.manual[r.s]?.nickname || `Store ${r.s.split('-').pop()}`}</td>
+                              <td className="px-4 py-2 text-muted-foreground">{r.weekEndDateStr}</td>
+                              <td className="px-4 py-2 text-right font-medium">{formatCur(r.netSales)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
                 </div>
+
               </div>
 
             </div>
+          )}
+        </div>
 
-          </div>
-        )}
+        <ChangePasswordModal
+          isOpen={isPasswordModalOpen}
+          onClose={() => setIsPasswordModalOpen(false)}
+          userId={user?.id as string}
+        />
       </div>
-
-      <ChangePasswordModal
-        isOpen={isPasswordModalOpen}
-        onClose={() => setIsPasswordModalOpen(false)}
-        userId={user?.id as string}
-      />
-    </div>
+      <ChangePasswordModal isOpen={isPasswordModalOpen} onClose={() => setIsPasswordModalOpen(false)} userId={user?.id as string} />
+      <DataUploadWizard isOpen={isUploadWizardOpen} onClose={() => setIsUploadWizardOpen(false)} token={token} onSuccess={fetchData} />
+    </>
   );
 }

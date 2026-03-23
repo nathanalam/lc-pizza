@@ -10,6 +10,7 @@ import Login from "./pages/Login";
 import Signup from "./pages/Signup";
 import Admin from "./pages/Admin";
 import NotFound from "./pages/NotFound";
+import DataManager from "./pages/DataManager";
 
 const queryClient = new QueryClient();
 
@@ -29,6 +30,11 @@ const AppRoutes = () => {
       <Route path="/admin" element={
         <ProtectedRoute>
           <Admin />
+        </ProtectedRoute>
+      } />
+      <Route path="/data" element={
+        <ProtectedRoute>
+          <DataManager />
         </ProtectedRoute>
       } />
       <Route path="/dashboard" element={
