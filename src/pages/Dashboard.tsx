@@ -13,6 +13,8 @@ import ChangePasswordModal from '@/components/ChangePasswordModal';
 ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend, ArcElement);
 
 const COGS_PCT = 0.28;
+const ROYALTY_PCT = 0.10;   // Fixed LC franchise rate (6% royalty + 4% ad fund)
+const DEL_EST_PCT = 0.20;   // Fallback delivery commission estimate when no actual data
 
 type RawDataRow = any;
 
@@ -23,8 +25,6 @@ type StoreManualAdjustment = {
   sga: number;
   payouts: number;
   capex: number;
-  deliveryPct: number;
-  royaltyPct: number;
 };
 
 type AppState = {
@@ -134,7 +134,7 @@ export default function Dashboard() {
         if (storeStr) {
           uniqueStores.add(storeStr);
           if (!newState.manual[storeStr]) {
-            newState.manual[storeStr] = { rent: 0, util: 0, maint: 0, sga: 0, payouts: 0, capex: 0, deliveryPct: 20, royaltyPct: 10 };
+            newState.manual[storeStr] = { rent: 0, util: 0, maint: 0, sga: 0, payouts: 0, capex: 0 };
           }
         }
       });
@@ -353,20 +353,36 @@ export default function Dashboard() {
       isCogsEstimated = true;
     }
 
+    // Check for actual delivery service fees in summary data
+    let actualDelFees = 0;
+    filteredData.summary.forEach(r => {
+      actualDelFees += Number(r['Delivery Service Fee']) || 0;
+    });
+    const isDelEstimated = actualDelFees === 0;
+
     let mDel = 0, mRoy = 0, mRent = 0, mUtil = 0, mMaint = 0, mSga = 0, mPayouts = 0, mCapex = 0;
+
+    if (!isDelEstimated) {
+      mDel = actualDelFees;
+    }
 
     stores.forEach(s => {
       if (currentStore === 'ALL' || s === currentStore) {
-        const man = state.manual[s] || { rent: 0, util: 0, maint: 0, sga: 0, payouts: 0, capex: 0, deliveryPct: 20, royaltyPct: 10 };
-        let storeV3p = 0; let storeOblig = 0;
+        const man = state.manual[s] || { rent: 0, util: 0, maint: 0, sga: 0, payouts: 0, capex: 0 };
+        let storeOblig = 0;
 
-        filteredData.txns.filter(r => (r['Franchise Store'] || '').toString().trim() === s).forEach(r => {
-          const m = String(r['Payment Method'] || '').toUpperCase();
-          if (m.includes('DOORDASH') || m.includes('UBEREATS') || m.includes('GRUBHUB')) storeV3p += Number(r['Total Amount']) || 0;
-        });
         filteredData.summary.filter(r => (r['Franchise Store'] || '').toString().trim() === s).forEach(r => {
           storeOblig += Number(r['Royalty Obligation']) || 0;
         });
+
+        if (isDelEstimated) {
+          let storeV3p = 0;
+          filteredData.txns.filter(r => (r['Franchise Store'] || '').toString().trim() === s).forEach(r => {
+            const m = String(r['Payment Method'] || '').toUpperCase();
+            if (m.includes('DOORDASH') || m.includes('UBEREATS') || m.includes('GRUBHUB')) storeV3p += Number(r['Total Amount']) || 0;
+          });
+          mDel += (storeV3p * DEL_EST_PCT);
+        }
 
         mRent += man.rent || 0;
         mUtil += man.util || 0;
@@ -374,8 +390,7 @@ export default function Dashboard() {
         mSga += man.sga || 0;
         mPayouts += man.payouts || 0;
         mCapex += man.capex || 0;
-        mDel += (storeV3p * ((man.deliveryPct || 20) / 100));
-        mRoy += (storeOblig * ((man.royaltyPct || 10) / 100));
+        mRoy += (storeOblig * ROYALTY_PCT);
       }
     });
 
@@ -423,7 +438,7 @@ export default function Dashboard() {
         sInvoice += Number(r['Invoice Total']) || 0;
       });
 
-      const man = state.manual[s] || { rent: 0, util: 0, maint: 0, sga: 0, payouts: 0, capex: 0, deliveryPct: 20, royaltyPct: 10 };
+      const man = state.manual[s] || { rent: 0, util: 0, maint: 0, sga: 0, payouts: 0, capex: 0 };
       const net = gross - tax;
 
       let cogsVal = 0;
@@ -431,8 +446,12 @@ export default function Dashboard() {
       else if (sInvoice > 0) cogsVal = sInvoice;
       else cogsVal = net * COGS_PCT;
 
-      const sDelFee = sV3p * ((man.deliveryPct || 20) / 100);
-      const sRoyaltyFee = sOblig * ((man.royaltyPct || 10) / 100);
+      let sActualDelFee = 0;
+      filteredData.summary.filter(r => (r['Franchise Store'] || '').toString().trim() === s).forEach(r => {
+        sActualDelFee += Number(r['Delivery Service Fee']) || 0;
+      });
+      const sDelFee = sActualDelFee > 0 ? sActualDelFee : sV3p * DEL_EST_PCT;
+      const sRoyaltyFee = sOblig * ROYALTY_PCT;
       const rentUtil = (man.rent || 0) + (man.util || 0);
       const otherExp = (man.maint || 0) + (man.sga || 0) + (man.payouts || 0) + (man.capex || 0);
       const op = net - cogsVal - sLabor - sDelFee - sRoyaltyFee - rentUtil - otherExp;
@@ -473,16 +492,18 @@ export default function Dashboard() {
     const weekEndDateStr = weekEndMs > 0 ? new Date(weekEndMs).toISOString().split('T')[0] : '';
     const exportRows = Object.keys(exportMap).sort().map(s => ({ s, weekEndDateStr, ...exportMap[s] }));
 
+    const effectiveDelPct = (!isDelEstimated && v3p > 0) ? (actualDelFees / v3p) * 100 : null;
+
     return {
       tGross, tTax, tNet, cogs, isCogsEstimated, laborCost, tTxns, tVar, v3p, rOblig,
-      mDel, mRoy, mRent, mUtil, mMaint, mSga, mPayouts, mCapex, opProfit,
+      mDel, isDelEstimated, effectiveDelPct, mRoy, mRent, mUtil, mMaint, mSga, mPayouts, mCapex, opProfit,
       margin: tNet > 0 ? (opProfit / tNet) * 100 : 0,
       carryout, delivery,
       payMap, storeMix, topProducts, dailyVar, exportRows
     };
   }, [filteredData, state.manual, currentStore, stores]);
 
-  const activeManual = state.manual[currentStore === 'ALL' ? (stores[0] || 'ALL') : currentStore] || { rent: 0, util: 0, maint: 0, sga: 0, payouts: 0, capex: 0, deliveryPct: 20, royaltyPct: 10 };
+  const activeManual = state.manual[currentStore === 'ALL' ? (stores[0] || 'ALL') : currentStore] || { rent: 0, util: 0, maint: 0, sga: 0, payouts: 0, capex: 0 };
   const formatCur = (num: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(num || 0);
 
   const handleExportCSV = () => {
@@ -597,7 +618,7 @@ export default function Dashboard() {
                   {[
                     { l: stats.isCogsEstimated ? 'COGS (Est. 28%)' : 'COGS (Actual)', v: stats.cogs },
                     ...(stats.laborCost > 0 ? [{ l: 'Labor', v: stats.laborCost }] : []),
-                    { l: '3rd Party Delivery Fees', v: stats.mDel },
+                    { l: stats.isDelEstimated ? `3rd Party Del. Fees (Est. ${DEL_EST_PCT * 100}%)` : '3rd Party Del. Fees (Actual)', v: stats.mDel },
                     { l: 'Franchise & Ad Fees', v: stats.mRoy },
                     { l: 'Rent', v: stats.mRent },
                     { l: 'Utilities', v: stats.mUtil },
@@ -627,11 +648,15 @@ export default function Dashboard() {
                   </p>
                 </div>
 
+                {stats.effectiveDelPct !== null && (
+                  <div className="flex justify-between items-center text-sm mb-2 pb-2 border-b border-border">
+                    <span className="text-muted-foreground">Eff. Delivery Commission</span>
+                    <span className="font-medium text-foreground">{stats.effectiveDelPct.toFixed(1)}%</span>
+                  </div>
+                )}
+
                 <div className="space-y-4">
                   {[
-                    { l: 'Delivery Comm. (%)', k: 'deliveryPct', w: 20, p: 20 },
-                    { l: 'Franchise/Ad Fee (%)', k: 'royaltyPct', w: 20, p: 10 },
-                    { sep: true },
                     { l: 'Rent ($)', k: 'rent', w: 24, p: 1000 },
                     { l: 'Utilities ($)', k: 'util', w: 24, p: 300 },
                     { l: 'Maintenance ($)', k: 'maint', w: 24, p: 75 },
