@@ -11,6 +11,7 @@ import Signup from "./pages/Signup";
 import Admin from "./pages/Admin";
 import NotFound from "./pages/NotFound";
 import DataManager from "./pages/DataManager";
+import PandLAudit from "./pages/PandLAudit";
 
 const queryClient = new QueryClient();
 
@@ -35,6 +36,11 @@ const AppRoutes = () => {
       <Route path="/data" element={
         <ProtectedRoute>
           <DataManager />
+        </ProtectedRoute>
+      } />
+      <Route path="/audit" element={
+        <ProtectedRoute>
+          <PandLAudit />
         </ProtectedRoute>
       } />
       <Route path="/dashboard" element={

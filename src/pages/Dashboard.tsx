@@ -10,7 +10,6 @@ import { Upload, Database, Loader2, Download, Shield, CalendarIcon, KeyRound, Al
 import { useToast } from '@/hooks/use-toast';
 import ChangePasswordModal from '@/components/ChangePasswordModal';
 import DataUploadWizard from '@/components/DataUploadWizard';
-import PandLAuditWizard from '@/components/PandLAuditWizard';
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend, ArcElement);
 
@@ -94,7 +93,6 @@ export default function Dashboard() {
   const [dateRange, setDateRange] = useState({ start: '', end: '' });
   const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
   const [isUploadWizardOpen, setIsUploadWizardOpen] = useState(false);
-  const [isPandLWizardOpen, setIsPandLWizardOpen] = useState(false);
 
   useEffect(() => {
     fetchData();
@@ -584,7 +582,7 @@ export default function Dashboard() {
                     <Upload className="w-4 h-4" /> Upload Excel Files
                   </button>
                   <button
-                    onClick={() => setIsPandLWizardOpen(true)}
+                    onClick={() => navigate('/audit')}
                     className="bg-amber-500/10 hover:bg-amber-500/20 text-amber-500 transition-colors px-4 py-2 rounded-lg border border-amber-500/20 flex items-center gap-2 text-sm font-medium whitespace-nowrap"
                   >
                     <AlertCircle className="w-4 h-4" /> P&L Audit
@@ -908,14 +906,6 @@ export default function Dashboard() {
               onClose={() => setIsUploadWizardOpen(false)}
               token={token}
               onSuccess={fetchData}
-            />
-            <PandLAuditWizard
-              isOpen={isPandLWizardOpen}
-              onOpenChange={setIsPandLWizardOpen}
-              stores={stores}
-              manual={state.manual}
-              token={token}
-              onSaved={fetchData}
             />
           </>
         )}
