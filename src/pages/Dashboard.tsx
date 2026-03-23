@@ -6,8 +6,9 @@ import { Doughnut, Bar } from 'react-chartjs-2';
 import {
   Chart as ChartJS, CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend, ArcElement
 } from 'chart.js';
-import { Upload, Database, Loader2, Download, Shield, CalendarIcon } from 'lucide-react';
+import { Upload, Database, Loader2, Download, Shield, CalendarIcon, KeyRound } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import ChangePasswordModal from '@/components/ChangePasswordModal';
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend, ArcElement);
 
@@ -39,6 +40,38 @@ type AppState = {
   manual: Record<string, StoreManualAdjustment>;
 };
 
+const ManualInput = ({ value, onChange, placeholder, className }: { value: number | string, onChange: (val: number) => void, placeholder: string, className: string }) => {
+  const [localValue, setLocalValue] = useState(value.toString());
+
+  useEffect(() => {
+    setLocalValue(value.toString());
+  }, [value]);
+
+  const handleBlur = () => {
+    if (localValue === value.toString()) return;
+    const parsed = parseFloat(localValue);
+    onChange(isNaN(parsed) ? 0 : parsed);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.currentTarget.blur();
+    }
+  };
+
+  return (
+    <input
+      type="number"
+      value={localValue}
+      onChange={e => setLocalValue(e.target.value)}
+      onBlur={handleBlur}
+      onKeyDown={handleKeyDown}
+      placeholder={placeholder}
+      className={className}
+    />
+  );
+};
+
 export default function Dashboard() {
   const { user, token, logout } = useAuth();
   const navigate = useNavigate();
@@ -56,6 +89,7 @@ export default function Dashboard() {
   const [currentStore, setCurrentStore] = useState('ALL');
 
   const [dateRange, setDateRange] = useState({ start: '', end: '' });
+  const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
 
   useEffect(() => {
     fetchData();
@@ -419,7 +453,7 @@ export default function Dashboard() {
     const dailyVar: { date: string, store: string, val: number }[] = [];
     filteredData.summary.forEach(r => {
       const v = Number(r['Over Short']) || 0;
-      if (v !== 0) dailyVar.push({ date: r['Business Date'], store: (r['Franchise Store'] || '').toString().split('-').pop() || '', val: v });
+      if (v !== 0) dailyVar.push({ date: r['Business Date'] || r['Date'], store: (r['Franchise Store'] || '').toString().split('-').pop() || '', val: v });
     });
     dailyVar.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
@@ -429,7 +463,7 @@ export default function Dashboard() {
     filteredData.summary.forEach(r => {
       const storeNum = (r['Franchise Store'] || '').toString().trim().split('-').pop();
       if (!storeNum) return;
-      const dateMs = new Date(r['Business Date']).getTime();
+      const dateMs = new Date(r['Business Date'] || r['Date']).getTime();
       if (dateMs > weekEndMs) weekEndMs = dateMs;
 
       if (!exportMap[storeNum]) exportMap[storeNum] = { netSales: 0, custCount: 0 };
@@ -483,6 +517,12 @@ export default function Dashboard() {
                 <Shield className="w-4 h-4" /> Admin Panel
               </button>
             )}
+            <button
+              onClick={() => setIsPasswordModalOpen(true)}
+              className="flex items-center gap-1.5 text-muted-foreground hover:text-foreground text-sm mr-2 transition-colors whitespace-nowrap"
+            >
+              <KeyRound className="w-4 h-4" /> Change Password
+            </button>
             <button onClick={logout} className="text-muted-foreground hover:text-foreground text-sm mr-2 transition-colors whitespace-nowrap">Sign out ({user?.email})</button>
 
             {/* Date Filters */}
@@ -581,7 +621,7 @@ export default function Dashboard() {
               {/* Manual Edits */}
               <div className="bg-card border border-border p-5 rounded-2xl flex flex-col shadow-lg xl:col-span-1">
                 <div className="flex flex-col gap-1 mb-4">
-                  <h3 className="text-sm font-bold text-foreground uppercase tracking-wider">Manual Adj.</h3>
+                  <h3 className="text-sm font-bold text-foreground uppercase tracking-wider">Manual Adjustments</h3>
                   <p className="text-xs text-primary italic">
                     {currentStore === 'ALL' ? 'Apply baseline to ALL stores' : `Adjusting Store ${currentStore.split('-').pop()}`}
                   </p>
@@ -601,10 +641,10 @@ export default function Dashboard() {
                   ].map((f: any, i) => f.sep ? <hr key={i} className="border-border" /> : (
                     <div key={i} className="flex justify-between items-center">
                       <label className="text-sm text-muted-foreground">{f.l}</label>
-                      <input
-                        type="number"
-                        value={currentStore === 'ALL' ? '' : (activeManual[f.k as keyof StoreManualAdjustment] || '')}
-                        onChange={e => handleManualChange(f.k as keyof StoreManualAdjustment, parseFloat(e.target.value) || 0)}
+                      <ManualInput
+                        key={`${currentStore}-${f.k}`}
+                        value={currentStore === 'ALL' ? '' : (activeManual[f.k as keyof StoreManualAdjustment] ?? '')}
+                        onChange={val => handleManualChange(f.k as keyof StoreManualAdjustment, val)}
                         placeholder={(f.p).toString()}
                         className={`bg-background border border-border rounded px-2 py-1 w-${f.w} text-right text-foreground text-sm focus:outline-none focus:border-primary`}
                       />
@@ -787,6 +827,12 @@ export default function Dashboard() {
           </div>
         )}
       </div>
+
+      <ChangePasswordModal
+        isOpen={isPasswordModalOpen}
+        onClose={() => setIsPasswordModalOpen(false)}
+        userId={user?.id as string}
+      />
     </div>
   );
 }
