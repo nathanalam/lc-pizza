@@ -6,14 +6,14 @@ import { Doughnut, Bar } from 'react-chartjs-2';
 import {
   Chart as ChartJS, CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend, ArcElement
 } from 'chart.js';
-import { Upload, Database, Loader2, Download, Shield, CalendarIcon, KeyRound } from 'lucide-react';
+import { Upload, Database, Loader2, Download, Shield, CalendarIcon, KeyRound, AlertCircle } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import ChangePasswordModal from '@/components/ChangePasswordModal';
 import DataUploadWizard from '@/components/DataUploadWizard';
+import PandLAuditWizard from '@/components/PandLAuditWizard';
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend, ArcElement);
 
-const COGS_PCT = 0.28;
 const ROYALTY_PCT = 0.10;   // Fixed LC franchise rate (6% royalty + 4% ad fund)
 const DEL_EST_PCT = 0.20;   // Fallback delivery commission estimate when no actual data
 
@@ -27,6 +27,7 @@ type StoreManualAdjustment = {
   payouts: number;
   capex: number;
   nickname?: string;
+  weekly?: Record<string, any>;
 };
 
 type AppState = {
@@ -93,6 +94,7 @@ export default function Dashboard() {
   const [dateRange, setDateRange] = useState({ start: '', end: '' });
   const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
   const [isUploadWizardOpen, setIsUploadWizardOpen] = useState(false);
+  const [isPandLWizardOpen, setIsPandLWizardOpen] = useState(false);
 
   useEffect(() => {
     fetchData();
@@ -262,58 +264,185 @@ export default function Dashboard() {
     const tNet = tGross - tTax;
 
     // Determine COGS
-    let isCogsEstimated = false;
     let cogs = 0;
     if (invUsageCost > 0) {
       cogs = invUsageCost;
     } else if (invoiceCost > 0) {
       cogs = invoiceCost;
-    } else {
-      cogs = tNet * COGS_PCT;
-      isCogsEstimated = true;
     }
 
     // Check for actual delivery service fees in summary data
-    let actualDelFees = 0;
-    filteredData.summary.forEach(r => {
-      actualDelFees += Number(r['Delivery Service Fee']) || 0;
-    });
-    const isDelEstimated = actualDelFees === 0;
+    const getWeekEndString = (dStr: string) => {
+      const date = new Date(dStr);
+      const day = date.getUTCDay(); // 0 is Sunday
+      const toAdd = day === 0 ? 0 : 7 - day;
+      const wEnd = new Date(date.getTime() + toAdd * 86400000);
+      return wEnd.toISOString().split('T')[0];
+    };
 
-    let mDel = 0, mRoy = 0, mRent = 0, mUtil = 0, mMaint = 0, mSga = 0, mPayouts = 0, mCapex = 0;
-
-    if (!isDelEstimated) {
-      mDel = actualDelFees;
-    }
+    const storeAvgs: Record<string, any> = {};
+    const networkTotals = { rent: 0, util: 0, maint: 0, sga: 0, payouts: 0, capex: 0, count: 0 };
 
     stores.forEach(s => {
-      if (currentStore === 'ALL' || s === currentStore) {
-        const man = state.manual[s] || { rent: 0, util: 0, maint: 0, sga: 0, payouts: 0, capex: 0 };
-        let storeOblig = 0;
-
-        filteredData.summary.filter(r => (r['Franchise Store'] || '').toString().trim() === s).forEach(r => {
-          storeOblig += Number(r['Royalty Obligation']) || 0;
+      const weekly = state.manual[s]?.weekly || {};
+      const weeks = Object.values(weekly) as { rent: number, util: number, maint: number, sga: number, payouts: number, capex: number }[];
+      if (weeks.length > 0) {
+        const storeTotal = { rent: 0, util: 0, maint: 0, sga: 0, payouts: 0, capex: 0 };
+        weeks.forEach(w => {
+          storeTotal.rent += w.rent || 0;
+          storeTotal.util += w.util || 0;
+          storeTotal.maint += w.maint || 0;
+          storeTotal.sga += w.sga || 0;
+          storeTotal.payouts += w.payouts || 0;
+          storeTotal.capex += w.capex || 0;
         });
-
-        if (isDelEstimated) {
-          let storeV3p = 0;
-          filteredData.txns.filter(r => (r['Franchise Store'] || '').toString().trim() === s).forEach(r => {
-            const m = String(r['Payment Method'] || '').toUpperCase();
-            if (m.includes('DOORDASH') || m.includes('UBEREATS') || m.includes('GRUBHUB')) storeV3p += Number(r['Total Amount']) || 0;
-          });
-          mDel += (storeV3p * DEL_EST_PCT);
-        }
-
-        mRent += man.rent || 0;
-        mUtil += man.util || 0;
-        mMaint += man.maint || 0;
-        mSga += man.sga || 0;
-        mPayouts += man.payouts || 0;
-        mCapex += man.capex || 0;
-        mRoy += (storeOblig * ROYALTY_PCT);
+        storeAvgs[s] = {
+          rent: storeTotal.rent / weeks.length,
+          util: storeTotal.util / weeks.length,
+          maint: storeTotal.maint / weeks.length,
+          sga: storeTotal.sga / weeks.length,
+          payouts: storeTotal.payouts / weeks.length,
+          capex: storeTotal.capex / weeks.length
+        };
+        networkTotals.rent += storeTotal.rent;
+        networkTotals.util += storeTotal.util;
+        networkTotals.maint += storeTotal.maint;
+        networkTotals.sga += storeTotal.sga;
+        networkTotals.payouts += storeTotal.payouts;
+        networkTotals.capex += storeTotal.capex;
+        networkTotals.count += weeks.length;
+      } else {
+        storeAvgs[s] = { rent: 0, util: 0, maint: 0, sga: 0, payouts: 0, capex: 0 };
       }
     });
 
+    const netAvg = networkTotals.count > 0 ? {
+      rent: networkTotals.rent / networkTotals.count,
+      util: networkTotals.util / networkTotals.count,
+      maint: networkTotals.maint / networkTotals.count,
+      sga: networkTotals.sga / networkTotals.count,
+      payouts: networkTotals.payouts / networkTotals.count,
+      capex: networkTotals.capex / networkTotals.count,
+    } : { rent: 0, util: 0, maint: 0, sga: 0, payouts: 0, capex: 0 };
+
+    const derivationsMap: Record<string, { qb: number, store: number, net: number, static: number }> = {
+      rent: { qb: 0, store: 0, net: 0, static: 0 },
+      util: { qb: 0, store: 0, net: 0, static: 0 },
+      maint: { qb: 0, store: 0, net: 0, static: 0 },
+      sga: { qb: 0, store: 0, net: 0, static: 0 },
+      payouts: { qb: 0, store: 0, net: 0, static: 0 },
+      capex: { qb: 0, store: 0, net: 0, static: 0 },
+    };
+
+    const getDailyRate = (metric: keyof typeof derivationsMap, s: string, weeklyObj: any, baseline: number) => {
+      const isTracked = currentStore === 'ALL' || currentStore === s;
+      if (weeklyObj && weeklyObj[metric] !== undefined) {
+        if (isTracked) derivationsMap[metric].qb++;
+        return (weeklyObj[metric] || 0) / 7;
+      }
+      if (storeAvgs[s][metric as 'rent'] > 0) {
+        if (isTracked) derivationsMap[metric].store++;
+        return storeAvgs[s][metric as 'rent'] / 7;
+      }
+      if (netAvg[metric as 'rent'] > 0) {
+        if (isTracked) derivationsMap[metric].net++;
+        return netAvg[metric as 'rent'] / 7;
+      }
+      if (isTracked) derivationsMap[metric].static++;
+      return (baseline || 0) / 7;
+    };
+
+    const resolveDerivationLabel = (metric: keyof typeof derivationsMap) => {
+      const m = derivationsMap[metric];
+      const total = m.qb + m.store + m.net + m.static;
+      if (total === 0) return 'No Data';
+
+      if (m.qb > 0 && m.qb === total) return 'QuickBooks Actuals';
+      if (m.qb > 0) return `Mixed (Includes QuickBooks)`;
+      if (m.store > 0 && m.store === total) return 'Store Historical Avg';
+      if (m.store > 0) return `Mixed (Includes Store Avg)`;
+      if (m.net > 0 && m.net === total) return 'Network Avg';
+      if (m.net > 0) return `Mixed (Includes Network Avg)`;
+      return 'Legacy Fallback';
+    };
+
+    // Generate store mix
+    const storeMix = stores.map(s => {
+      let gross = 0, tax = 0, sOblig = 0;
+      let sLabor = 0, sInvUsage = 0, sInvoice = 0;
+      let sRent = 0, sUtil = 0, sMaint = 0, sSga = 0, sPayouts = 0, sCapex = 0;
+      let sActualDelFee = 0;
+      const man = state.manual[s] || { rent: 0, util: 0, maint: 0, sga: 0, payouts: 0, capex: 0, weekly: {} };
+
+      filteredData.summary.filter(r => (r['Franchise Store'] || '').toString().trim() === s).forEach(r => {
+        gross += Number(r['Gross Sales']) || 0;
+        tax += Number(r['Sales Tax']) || 0;
+        sOblig += Number(r['Royalty Obligation']) || 0;
+        sActualDelFee += Number(r['Delivery Service Fee']) || 0;
+
+        const dStr = (r['Business Date'] || r['Date'] || '').toString();
+        if (dStr) {
+          const wEnd = getWeekEndString(dStr);
+          const weekly = man.weekly?.[wEnd];
+          sRent += getDailyRate('rent', s, weekly, man.rent);
+          sUtil += getDailyRate('util', s, weekly, man.util);
+          sMaint += getDailyRate('maint', s, weekly, man.maint);
+          sSga += getDailyRate('sga', s, weekly, man.sga);
+          sPayouts += getDailyRate('payouts', s, weekly, man.payouts);
+          sCapex += getDailyRate('capex', s, weekly, man.capex);
+        }
+      });
+      let sV3p = 0;
+      filteredData.txns.filter(r => (r['Franchise Store'] || '').toString().trim() === s).forEach(r => {
+        const m = String(r['Payment Method'] || '').toUpperCase();
+        if (m.includes('DOORDASH') || m.includes('UBEREATS') || m.includes('GRUBHUB')) sV3p += Number(r['Total Amount']) || 0;
+      });
+      filteredData.labor.filter(r => (r['Franchise Store'] || '').toString().trim() === s).forEach(r => {
+        sLabor += Number(r['Total Pay']) || 0;
+      });
+      filteredData.inventory.filter(r => (r['Franchise Store'] || '').toString().trim() === s).forEach(r => {
+        sInvUsage += Number(r['Used Value']) || 0;
+      });
+      filteredData.invoices.filter(r => (r['Franchise Store'] || '').toString().trim() === s).forEach(r => {
+        sInvoice += Number(r['Invoice Total']) || 0;
+      });
+
+      const net = gross - tax;
+
+      let cogsVal = 0;
+      if (sInvUsage > 0) cogsVal = sInvUsage;
+      else if (sInvoice > 0) cogsVal = sInvoice;
+
+      const sDelFee = sActualDelFee > 0 ? sActualDelFee : sV3p * DEL_EST_PCT;
+      const sRoyaltyFee = sOblig * ROYALTY_PCT;
+      const rentUtil = sRent + sUtil;
+      const otherExp = sMaint + sSga + sPayouts + sCapex;
+      const op = net - cogsVal - sLabor - sDelFee - sRoyaltyFee - rentUtil - otherExp;
+      return { s, net, cogs: cogsVal, labor: sLabor, delFee: sDelFee, royaltyFee: sRoyaltyFee, rentUtil, otherExp, sRent, sUtil, sMaint, sSga, sPayouts, sCapex, sV3p, op, marg: net > 0 ? ((op / net) * 100).toFixed(1) : "0.0", sOblig };
+    }).sort((a, b) => b.op - a.op);
+
+    // Apply global aggregations
+    let mDel = 0, mRoy = 0, mRent = 0, mUtil = 0, mMaint = 0, mSga = 0, mPayouts = 0, mCapex = 0;
+    let actualDelFees = 0;
+    let totalV3p = 0;
+
+    storeMix.forEach(sm => {
+      if (currentStore === 'ALL' || sm.s === currentStore) {
+        mRent += sm.sRent;
+        mUtil += sm.sUtil;
+        mMaint += sm.sMaint;
+        mSga += sm.sSga;
+        mPayouts += sm.sPayouts;
+        mCapex += sm.sCapex;
+        mRoy += sm.royaltyFee;
+        mDel += sm.delFee;
+        totalV3p += sm.sV3p;
+        if (sm.delFee !== sm.sV3p * DEL_EST_PCT) actualDelFees += sm.delFee;
+      }
+    });
+
+    const isDelEstimated = actualDelFees === 0;
+    const effectiveDelPct = (!isDelEstimated && totalV3p > 0) ? (actualDelFees / totalV3p) * 100 : null;
     const opProfit = tNet - cogs - laborCost - mDel - mRoy - mRent - mUtil - mMaint - mSga - mPayouts - mCapex;
 
     let carryout = 0, delivery = 0;
@@ -333,50 +462,14 @@ export default function Dashboard() {
       payMap[m] = (payMap[m] || 0) + (Number(r['Total Amount']) || 0);
     });
 
-    // Generate store mix
-    const storeMix = stores.map(s => {
-      let gross = 0, tax = 0, sOblig = 0;
-      let sLabor = 0, sInvUsage = 0, sInvoice = 0;
-
-      filteredData.summary.filter(r => (r['Franchise Store'] || '').toString().trim() === s).forEach(r => {
-        gross += Number(r['Gross Sales']) || 0;
-        tax += Number(r['Sales Tax']) || 0;
-        sOblig += Number(r['Royalty Obligation']) || 0;
-      });
-      let sV3p = 0;
-      filteredData.txns.filter(r => (r['Franchise Store'] || '').toString().trim() === s).forEach(r => {
-        const m = String(r['Payment Method'] || '').toUpperCase();
-        if (m.includes('DOORDASH') || m.includes('UBEREATS') || m.includes('GRUBHUB')) sV3p += Number(r['Total Amount']) || 0;
-      });
-      filteredData.labor.filter(r => (r['Franchise Store'] || '').toString().trim() === s).forEach(r => {
-        sLabor += Number(r['Total Pay']) || 0;
-      });
-      filteredData.inventory.filter(r => (r['Franchise Store'] || '').toString().trim() === s).forEach(r => {
-        sInvUsage += Number(r['Used Value']) || 0;
-      });
-      filteredData.invoices.filter(r => (r['Franchise Store'] || '').toString().trim() === s).forEach(r => {
-        sInvoice += Number(r['Invoice Total']) || 0;
-      });
-
-      const man = state.manual[s] || { rent: 0, util: 0, maint: 0, sga: 0, payouts: 0, capex: 0 };
-      const net = gross - tax;
-
-      let cogsVal = 0;
-      if (sInvUsage > 0) cogsVal = sInvUsage;
-      else if (sInvoice > 0) cogsVal = sInvoice;
-      else cogsVal = net * COGS_PCT;
-
-      let sActualDelFee = 0;
-      filteredData.summary.filter(r => (r['Franchise Store'] || '').toString().trim() === s).forEach(r => {
-        sActualDelFee += Number(r['Delivery Service Fee']) || 0;
-      });
-      const sDelFee = sActualDelFee > 0 ? sActualDelFee : sV3p * DEL_EST_PCT;
-      const sRoyaltyFee = sOblig * ROYALTY_PCT;
-      const rentUtil = (man.rent || 0) + (man.util || 0);
-      const otherExp = (man.maint || 0) + (man.sga || 0) + (man.payouts || 0) + (man.capex || 0);
-      const op = net - cogsVal - sLabor - sDelFee - sRoyaltyFee - rentUtil - otherExp;
-      return { s, net, cogs: cogsVal, labor: sLabor, delFee: sDelFee, royaltyFee: sRoyaltyFee, rentUtil, otherExp, op, marg: net > 0 ? ((op / net) * 100).toFixed(1) : "0.0" };
-    }).sort((a, b) => b.op - a.op);
+    const derivations = {
+      rent: resolveDerivationLabel('rent'),
+      util: resolveDerivationLabel('util'),
+      maint: resolveDerivationLabel('maint'),
+      sga: resolveDerivationLabel('sga'),
+      payouts: resolveDerivationLabel('payouts'),
+      capex: resolveDerivationLabel('capex')
+    };
 
     // Product Mix
     const pMix: Record<string, { qty: number, rev: number }> = {};
@@ -412,14 +505,12 @@ export default function Dashboard() {
     const weekEndDateStr = weekEndMs > 0 ? new Date(weekEndMs).toISOString().split('T')[0] : '';
     const exportRows = Object.keys(exportMap).sort().map(s => ({ s, weekEndDateStr, ...exportMap[s] }));
 
-    const effectiveDelPct = (!isDelEstimated && v3p > 0) ? (actualDelFees / v3p) * 100 : null;
-
     return {
-      tGross, tTax, tNet, cogs, isCogsEstimated, laborCost, tTxns, tVar, v3p, rOblig,
+      tGross, tTax, tNet, cogs, laborCost, tTxns, tVar, v3p, rOblig,
       mDel, isDelEstimated, effectiveDelPct, mRoy, mRent, mUtil, mMaint, mSga, mPayouts, mCapex, opProfit,
       margin: tNet > 0 ? (opProfit / tNet) * 100 : 0,
       carryout, delivery,
-      payMap, storeMix, topProducts, dailyVar, exportRows
+      payMap, storeMix, topProducts, dailyVar, exportRows, derivations
     };
   }, [filteredData, state.manual, currentStore, stores]);
 
@@ -492,6 +583,12 @@ export default function Dashboard() {
                   >
                     <Upload className="w-4 h-4" /> Upload Excel Files
                   </button>
+                  <button
+                    onClick={() => setIsPandLWizardOpen(true)}
+                    className="bg-amber-500/10 hover:bg-amber-500/20 text-amber-500 transition-colors px-4 py-2 rounded-lg border border-amber-500/20 flex items-center gap-2 text-sm font-medium whitespace-nowrap"
+                  >
+                    <AlertCircle className="w-4 h-4" /> P&L Audit
+                  </button>
                 </>
               )}
               <select
@@ -549,7 +646,7 @@ export default function Dashboard() {
                     <div className="flex justify-between font-bold text-foreground border-b border-border pb-2"><span>Net Sales</span><span>{formatCur(stats.tNet)}</span></div>
 
                     {[
-                      { l: stats.isCogsEstimated ? 'COGS (Est. 28%)' : 'COGS (Actual)', v: stats.cogs },
+                      { l: 'COGS', v: stats.cogs },
                       ...(stats.laborCost > 0 ? [{ l: 'Labor', v: stats.laborCost }] : []),
                       { l: stats.isDelEstimated ? `3rd Party Del. Fees (Est. ${DEL_EST_PCT * 100}%)` : '3rd Party Del. Fees (Actual)', v: stats.mDel },
                       { l: 'Franchise & Ad Fees', v: stats.mRoy },
@@ -574,9 +671,9 @@ export default function Dashboard() {
 
                 <div className="bg-card border border-border p-5 rounded-2xl flex flex-col shadow-lg xl:col-span-1">
                   <div className="flex flex-col gap-1 mb-4">
-                    <h3 className="text-sm font-bold text-foreground uppercase tracking-wider">Manual Adjustments</h3>
-                    <p className="text-xs text-primary italic">
-                      {currentStore === 'ALL' ? 'Apply baseline to ALL stores' : `Adjusting ${state.manual[currentStore]?.nickname || ('Store ' + currentStore.split('-').pop())}`}
+                    <h3 className="text-sm font-bold text-foreground uppercase tracking-wider">Cost Sourcing</h3>
+                    <p className="text-[11px] text-muted-foreground leading-tight">
+                      When Quickbooks P&L audit data is absent for specific weeks, variables gracefully inherit store or global historical averages.
                     </p>
                   </div>
 
@@ -599,24 +696,26 @@ export default function Dashboard() {
                     </div>
                   )}
 
-                  <div className="space-y-4">
+                  <div className="space-y-4 mt-2">
                     {[
-                      { l: 'Rent ($)', k: 'rent', w: 24, p: 1000 },
-                      { l: 'Utilities ($)', k: 'util', w: 24, p: 300 },
-                      { l: 'Maintenance ($)', k: 'maint', w: 24, p: 75 },
-                      { l: 'Admin/SG&A ($)', k: 'sga', w: 24, p: 125 },
-                      { l: 'Cash Payouts ($)', k: 'payouts', w: 24, p: 0 },
-                      { l: 'Capex ($)', k: 'capex', w: 24, p: 0 },
-                    ].map((f: any, i) => f.sep ? <hr key={i} className="border-border" /> : (
-                      <div key={i} className="flex justify-between items-center">
-                        <label className="text-sm text-muted-foreground">{f.l}</label>
-                        <ManualInput
-                          key={`${currentStore}-${f.k}`}
-                          value={currentStore === 'ALL' ? '' : (activeManual[f.k as keyof StoreManualAdjustment] ?? '')}
-                          onChange={val => handleManualChange(f.k as keyof StoreManualAdjustment, val)}
-                          placeholder={(f.p).toString()}
-                          className={`bg-background border border-border rounded px-2 py-1 w-${f.w} text-right text-foreground text-sm focus:outline-none focus:border-primary`}
-                        />
+                      { l: 'Rent', k: 'rent', val: stats.mRent },
+                      { l: 'Utilities', k: 'util', val: stats.mUtil },
+                      { l: 'Maintenance', k: 'maint', val: stats.mMaint },
+                      { l: 'Admin/SG&A', k: 'sga', val: stats.mSga },
+                      { l: 'Cash Payouts', k: 'payouts', val: stats.mPayouts },
+                      { l: 'Capex', k: 'capex', val: stats.mCapex },
+                    ].map((f: any, i) => (
+                      <div key={i} className="flex flex-col gap-1.5 pb-3 border-b border-border/50 last:border-0 last:pb-0">
+                        <div className="flex justify-between items-center text-sm">
+                          <span className="text-muted-foreground">{f.l}</span>
+                          <span className="font-medium text-foreground">{formatCur(f.val)}</span>
+                        </div>
+                        <div className="flex justify-between items-center">
+                          <span className="text-[10px] uppercase font-bold text-muted-foreground/60">Data Source:</span>
+                          <span className={`text-[9px] uppercase px-2 py-0.5 rounded font-bold tracking-wider ${stats.derivations[f.k as keyof typeof stats.derivations].includes('QuickBooks') ? 'bg-green-500/10 text-green-500' : stats.derivations[f.k as keyof typeof stats.derivations].includes('Legacy') ? 'bg-rose-500/10 text-rose-400' : 'bg-blue-500/10 text-blue-400'}`}>
+                            {stats.derivations[f.k as keyof typeof stats.derivations]}
+                          </span>
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -802,9 +901,25 @@ export default function Dashboard() {
           onClose={() => setIsPasswordModalOpen(false)}
           userId={user?.id as string}
         />
+        {user?.is_admin && (
+          <>
+            <DataUploadWizard
+              isOpen={isUploadWizardOpen}
+              onClose={() => setIsUploadWizardOpen(false)}
+              token={token}
+              onSuccess={fetchData}
+            />
+            <PandLAuditWizard
+              isOpen={isPandLWizardOpen}
+              onOpenChange={setIsPandLWizardOpen}
+              stores={stores}
+              manual={state.manual}
+              token={token}
+              onSaved={fetchData}
+            />
+          </>
+        )}
       </div>
-      <ChangePasswordModal isOpen={isPasswordModalOpen} onClose={() => setIsPasswordModalOpen(false)} userId={user?.id as string} />
-      <DataUploadWizard isOpen={isUploadWizardOpen} onClose={() => setIsUploadWizardOpen(false)} token={token} onSuccess={fetchData} />
     </>
   );
 }
