@@ -6,10 +6,13 @@ import { Doughnut, Bar } from 'react-chartjs-2';
 import {
   Chart as ChartJS, CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend, ArcElement
 } from 'chart.js';
-import { Upload, Database, Loader2, Download, Shield, CalendarIcon, KeyRound, AlertCircle } from 'lucide-react';
+import { Upload, Database, Loader2, Download, Shield, CalendarIcon, KeyRound, AlertCircle, Printer } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import ChangePasswordModal from '@/components/ChangePasswordModal';
 import DataUploadWizard from '@/components/DataUploadWizard';
+import PrintReport from '@/components/PrintReport';
+import SVGLineChart from '@/components/SVGLineChart';
+import type { ChartSeries } from '@/components/SVGLineChart';
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend, ArcElement);
 
@@ -93,6 +96,7 @@ export default function Dashboard() {
   const [dateRange, setDateRange] = useState({ start: '', end: '' });
   const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
   const [isUploadWizardOpen, setIsUploadWizardOpen] = useState(false);
+  const [isPrintReportOpen, setIsPrintReportOpen] = useState(false);
 
   useEffect(() => {
     fetchData();
@@ -503,12 +507,34 @@ export default function Dashboard() {
     const weekEndDateStr = weekEndMs > 0 ? new Date(weekEndMs).toISOString().split('T')[0] : '';
     const exportRows = Object.keys(exportMap).sort().map(s => ({ s, weekEndDateStr, ...exportMap[s] }));
 
+    // Daily chart series — per store, per day: gross, net, opProfit (estimated via store margin)
+    const storeMargins: Record<string, number> = {};
+    storeMix.forEach(sm => { storeMargins[sm.s] = sm.net > 0 ? sm.op / sm.net : 0; });
+
+    const allDates = new Set<string>();
+    const storeDaily: Record<string, Record<string, { gross: number; net: number; opProfit: number }>> = {};
+    filteredData.summary.forEach(r => {
+      const date = (r['Business Date'] || r['Date'] || '').toString();
+      const store = (r['Franchise Store'] || '').toString().trim();
+      if (!date || !store) return;
+      allDates.add(date);
+      if (!storeDaily[store]) storeDaily[store] = {};
+      if (!storeDaily[store][date]) storeDaily[store][date] = { gross: 0, net: 0, opProfit: 0 };
+      const gross = Number(r['Gross Sales']) || 0;
+      const tax = Number(r['Sales Tax']) || 0;
+      const net = gross - tax;
+      storeDaily[store][date].gross += gross;
+      storeDaily[store][date].net += net;
+      storeDaily[store][date].opProfit += net * (storeMargins[store] || 0);
+    });
+    const dailyChartData = { dates: Array.from(allDates).sort(), storeDaily };
+
     return {
       tGross, tTax, tNet, cogs, laborCost, tTxns, tVar, v3p, rOblig,
       mDel, isDelEstimated, effectiveDelPct, mRoy, mRent, mUtil, mMaint, mSga, mPayouts, mCapex, opProfit,
       margin: tNet > 0 ? (opProfit / tNet) * 100 : 0,
       carryout, delivery,
-      payMap, storeMix, topProducts, dailyVar, exportRows, derivations
+      payMap, storeMix, topProducts, dailyVar, exportRows, derivations, dailyChartData
     };
   }, [filteredData, state.manual, currentStore, stores]);
 
@@ -589,6 +615,12 @@ export default function Dashboard() {
                   </button>
                 </>
               )}
+              <button
+                onClick={() => setIsPrintReportOpen(true)}
+                className="bg-violet-500/10 hover:bg-violet-500/20 text-violet-400 transition-colors px-4 py-2 rounded-lg border border-violet-500/20 flex items-center gap-2 text-sm font-medium whitespace-nowrap"
+              >
+                <Printer className="w-4 h-4" /> Print Report
+              </button>
               <select
                 value={currentStore}
                 onChange={e => setCurrentStore(e.target.value)}
@@ -758,6 +790,32 @@ export default function Dashboard() {
                 </div>
               </div>
 
+              {/* Daily Trends */}
+              {stats.dailyChartData.dates.length > 0 && (() => {
+                const CHART_COLORS = ['#3b82f6','#10b981','#f59e0b','#ef4444','#8b5cf6','#06b6d4','#f97316','#84cc16','#ec4899','#14b8a6'];
+                const chartStores = Object.keys(stats.dailyChartData.storeDaily).sort();
+                const { dates, storeDaily } = stats.dailyChartData;
+                const mkSeries = (key: 'gross' | 'net' | 'opProfit'): ChartSeries[] =>
+                  chartStores.map((s, i) => ({
+                    name: state.manual[s]?.nickname || `Store ${s.split('-').pop()}`,
+                    color: CHART_COLORS[i % CHART_COLORS.length],
+                    data: Object.fromEntries(Object.entries(storeDaily[s]).map(([d, v]) => [d, v[key]])),
+                  }));
+                return (
+                  <div className="bg-card border border-border p-5 rounded-2xl shadow-lg mt-6">
+                    <h3 className="text-sm font-bold text-foreground uppercase tracking-wider mb-5">Daily Trends</h3>
+                    <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+                      <SVGLineChart title="Gross Sales" dates={dates} series={mkSeries('gross')}
+                        axisColor="rgba(255,255,255,0.15)" gridColor="rgba(255,255,255,0.05)" labelColor="#94a3b8" zeroLineColor="#64748b" />
+                      <SVGLineChart title="Net Sales" dates={dates} series={mkSeries('net')}
+                        axisColor="rgba(255,255,255,0.15)" gridColor="rgba(255,255,255,0.05)" labelColor="#94a3b8" zeroLineColor="#64748b" />
+                      <SVGLineChart title="Operating Profit (Est.)" dates={dates} series={mkSeries('opProfit')}
+                        axisColor="rgba(255,255,255,0.15)" gridColor="rgba(255,255,255,0.05)" labelColor="#94a3b8" zeroLineColor="#64748b" />
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Full Store Breakdown */}
               <div className="bg-card border border-border p-5 rounded-2xl flex flex-col overflow-hidden shadow-lg mt-6">
                 <h3 className="text-sm font-bold text-foreground uppercase tracking-wider mb-4">Individual Store Financial Mix</h3>
@@ -909,6 +967,16 @@ export default function Dashboard() {
             />
           </>
         )}
+        <PrintReport
+          isOpen={isPrintReportOpen}
+          onClose={() => setIsPrintReportOpen(false)}
+          stats={stats}
+          manual={state.manual}
+          dateRange={dateRange}
+          currentStore={currentStore}
+          formatCur={formatCur}
+          DEL_EST_PCT={DEL_EST_PCT}
+        />
       </div>
     </>
   );
