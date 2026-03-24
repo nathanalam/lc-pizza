@@ -5,6 +5,7 @@ import * as XLSX from 'xlsx';
 import { Upload, AlertCircle, Save, ChevronRight, Database, ArrowLeft, Loader2 } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { useToast } from '@/hooks/use-toast';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine } from 'recharts';
 
 type StoreManualAdjustment = {
   rent: number;
@@ -46,12 +47,23 @@ const KEY_MAP: Record<string, string> = {
   'Total for Payroll Expenses': 'qbLabor',
   'Salaries & Wages': 'qbLabor',
   'Total Salaries & Wages': 'qbLabor',
-  'Labor Crew': 'qbLabor',
-  "Labor Officer's Salary": 'qbLabor',
+  'Labor - Crew': 'qbLabor',
+  "Labor - Officer's Salary": 'qbLabor',
+  "Labor -  Officer's Salary": 'qbLabor',
   'Payroll Taxes': 'qbLabor',
   'Telephone': 'util',
   'Grease trap': 'maint',
-  'Pest Control': 'maint'
+  'Pest Control': 'maint',
+  'Royalties': 'royalties',
+  'Delivery Commission - DD MP': 'deliveryComm',
+  'Delivery Service Fee - Mobile App': 'deliveryFee',
+  'Adv - CAESAR FUND': 'advertising',
+  'Advertising': 'advertising',
+  'Point of Sales': 'otherExpense',
+  'Trash': 'otherExpense',
+  'Uniforms': 'otherExpense',
+  'Supplies': 'otherExpense',
+  'Miscellaneous': 'otherExpense',
 };
 
 export default function PandLAudit() {
@@ -66,10 +78,9 @@ export default function PandLAudit() {
   const [activeTab, setActiveTab] = useState<'wizard' | 'compare'>('wizard');
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [selectedStore, setSelectedStore] = useState<string>('');
-  const [parsedData, setParsedData] = useState<{ weekEndDate: string; startDate: string; rawLabel: string; rent: number; util: number; maint: number; sga: number; payouts: number; capex: number; qbNetSales: number; qbCogs: number; qbLabor: number; }[]>([]);
+  const [parsedData, setParsedData] = useState<{ weekEndDate: string; startDate: string; rawLabel: string; rent: number; util: number; maint: number; sga: number; payouts: number; capex: number; qbNetSales: number; qbCogs: number; qbLabor: number; royalties: number; deliveryComm: number; deliveryFee: number; advertising: number; otherExpense: number; }[]>([]);
   const [loading, setLoading] = useState(false);
-  const [customStart, setCustomStart] = useState('');
-  const [customEnd, setCustomEnd] = useState('');
+  const [activeBarKey, setActiveBarKey] = useState<string | null>(null);
 
   type AmortStrategy = 'actual' | 'monthly' | 'uniform' | 'runrate';
   const [amortization, setAmortization] = useState<Record<'rent' | 'util' | 'maint' | 'sga', AmortStrategy>>({
@@ -211,7 +222,8 @@ export default function PandLAudit() {
            startDate: dc.startDate,
            rawLabel: dc.rawLabel,
            rent: 0, util: 0, maint: 0, sga: 0, payouts: 0, capex: 0,
-           qbNetSales: 0, qbCogs: 0, qbLabor: 0
+           qbNetSales: 0, qbCogs: 0, qbLabor: 0,
+           royalties: 0, deliveryComm: 0, deliveryFee: 0, advertising: 0, otherExpense: 0
         };
       });
 
@@ -295,9 +307,8 @@ export default function PandLAudit() {
     if (!selectedStore || !parsedData.length || !raw?.summary) return [];
     
     return parsedData.map(p => {
-      // Respect explicit user overrides over the parsed period limits
-      const startStr = customStart || p.startDate;
-      const endStr = customEnd || p.weekEndDate;
+      const startStr = p.startDate;
+      const endStr = p.weekEndDate;
 
       const inRange = (row: any) => {
         if (!startStr || !endStr) return false;
@@ -339,20 +350,27 @@ export default function PandLAudit() {
       const diffLabor = labor - (p.qbLabor || 0);
       const pctLabor = p.qbLabor > 0 ? Math.abs(diffLabor) / p.qbLabor : 0;
 
-      return { 
-        weekEndDate: p.weekEndDate, 
+      return {
+        weekEndDate: p.weekEndDate,
         rawLabel: p.rawLabel,
         dbNetSales: netSales, dbCogs: cogs, dbLabor: labor,
         qbNetSales: p.qbNetSales || 0, qbCogs: p.qbCogs || 0, qbLabor: p.qbLabor || 0,
         qbRent: p.rent || 0, qbUtil: p.util || 0, qbMaint: p.maint || 0, qbSga: p.sga || 0,
+        qbRoyalties: p.royalties || 0, qbDeliveryComm: p.deliveryComm || 0,
+        qbDeliveryFee: p.deliveryFee || 0, qbAdvertising: p.advertising || 0,
+        qbOtherExpense: p.otherExpense || 0,
         diffSales, pctSales, diffCogs, pctCogs, diffLabor, pctLabor
       };
     });
   }, [parsedData, selectedStore, raw]);
 
+  const dbComparisonWithData = useMemo(() =>
+    dbComparison.filter(p => p.dbNetSales > 0 || p.dbCogs > 0 || p.dbLabor > 0),
+  [dbComparison]);
+
   const aggregateComparison = useMemo(() => {
-    if (!dbComparison.length) return null;
-    return dbComparison.reduce((acc, curr) => {
+    if (!dbComparisonWithData.length) return null;
+    return dbComparisonWithData.reduce((acc, curr) => {
       acc.dbNetSales += curr.dbNetSales;
       acc.dbCogs += curr.dbCogs;
       acc.dbLabor += curr.dbLabor;
@@ -363,9 +381,14 @@ export default function PandLAudit() {
       acc.qbUtil += curr.qbUtil;
       acc.qbMaint += curr.qbMaint;
       acc.qbSga += curr.qbSga;
+      acc.qbRoyalties += curr.qbRoyalties;
+      acc.qbDeliveryComm += curr.qbDeliveryComm;
+      acc.qbDeliveryFee += curr.qbDeliveryFee;
+      acc.qbAdvertising += curr.qbAdvertising;
+      acc.qbOtherExpense += curr.qbOtherExpense;
       return acc;
-    }, { dbNetSales: 0, dbCogs: 0, dbLabor: 0, qbNetSales: 0, qbCogs: 0, qbLabor: 0, qbRent: 0, qbUtil: 0, qbMaint: 0, qbSga: 0 });
-  }, [dbComparison]);
+    }, { dbNetSales: 0, dbCogs: 0, dbLabor: 0, qbNetSales: 0, qbCogs: 0, qbLabor: 0, qbRent: 0, qbUtil: 0, qbMaint: 0, qbSga: 0, qbRoyalties: 0, qbDeliveryComm: 0, qbDeliveryFee: 0, qbAdvertising: 0, qbOtherExpense: 0 });
+  }, [dbComparisonWithData]);
 
   const handleSave = async () => {
     setLoading(true);
@@ -688,49 +711,196 @@ export default function PandLAudit() {
                         <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4">
                           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                             <h3 className="text-lg font-bold">Aggregate P&L Summary</h3>
-                            <div className="flex items-center gap-2 bg-secondary/50 p-1.5 rounded-lg border border-border">
-                              <div className="text-xs text-muted-foreground font-medium px-2">DB Window:</div>
-                              <input type="date" value={customStart} onChange={e => setCustomStart(e.target.value)} className="bg-background border border-border rounded-md px-2 py-1 text-xs focus:border-primary" />
-                              <span className="text-muted-foreground text-xs">to</span>
-                              <input type="date" value={customEnd} onChange={e => setCustomEnd(e.target.value)} className="bg-background border border-border rounded-md px-2 py-1 text-xs focus:border-primary" />
+                            <div className="text-xs text-muted-foreground bg-secondary/50 px-3 py-1.5 rounded-lg border border-border">
+                              {dbComparisonWithData.length} of {parsedData.length} periods matched in DB
                             </div>
                           </div>
-                          <div className="bg-card border border-border rounded-xl overflow-hidden shadow-sm">
-                            <table className="w-full text-sm text-left">
+                          <div className="bg-card border border-border rounded-xl overflow-x-auto shadow-sm">
+                            <table className="min-w-full text-sm text-left whitespace-nowrap">
                               <thead className="text-xs text-muted-foreground uppercase bg-secondary/30 border-b border-border">
                                 <tr>
                                   <th className="px-6 py-4">Account Category</th>
                                   <th className="px-6 py-4 text-right">QuickBooks (Actuals)</th>
-                                  <th className="px-6 py-4 text-right">Database (Predicted)</th>
+                                  <th className="px-6 py-4 text-right">Database (POS)</th>
                                   <th className="px-6 py-4 text-right">Variance</th>
                                 </tr>
                               </thead>
                               <tbody className="divide-y divide-slate-800/60">
-                                {([
-                                  { label: 'Net Sales', qb: aggregateComparison.qbNetSales, db: aggregateComparison.dbNetSales, showIfZero: true },
-                                  { label: 'Cost of Goods Sold', qb: aggregateComparison.qbCogs, db: aggregateComparison.dbCogs, showIfZero: true },
-                                  { label: 'Total Labor', qb: aggregateComparison.qbLabor, db: aggregateComparison.dbLabor, showIfZero: true },
-                                  { label: 'Store Rent', qb: aggregateComparison.qbRent, db: (manual[selectedStore]?.rent || 0) * parsedData.length, showIfZero: false },
-                                  { label: 'Utilities', qb: aggregateComparison.qbUtil, db: (manual[selectedStore]?.util || 0) * parsedData.length, showIfZero: false },
-                                  { label: 'Maintenance', qb: aggregateComparison.qbMaint, db: (manual[selectedStore]?.maint || 0) * parsedData.length, showIfZero: false },
-                                  { label: 'SG&A', qb: aggregateComparison.qbSga, db: (manual[selectedStore]?.sga || 0) * parsedData.length, showIfZero: false }
-                                ]).filter(item => item.showIfZero || item.qb > 0 || item.db > 0).map(row => {
-                                  const diff = row.db - row.qb;
-                                  const pct = row.qb > 0 ? Math.abs(diff) / row.qb : 0;
-                                  return (
-                                    <tr key={row.label} className="hover:bg-muted/50 transition">
-                                      <td className="px-6 py-4 font-medium">{row.label}</td>
-                                      <td className="px-6 py-4 text-right">{formatCur(row.qb)}</td>
-                                      <td className="px-6 py-4 text-right">{formatCur(row.db)}</td>
-                                      <td className={`px-6 py-4 text-right font-medium ${Math.abs(diff) > 100 ? 'text-rose-400' : 'text-green-500'}`}>
-                                        {diff > 0 ? '+' : ''}{formatCur(diff)}
-                                        <span className="text-[10px] ml-1.5 opacity-70">({(pct * 100).toFixed(1)}%)</span>
-                                      </td>
-                                    </tr>
-                                  );
-                                })}
+                                {(() => {
+                                  type AggRow = { label: string; section: string; qb: number; db: number | null; showIfZero: boolean };
+                                  const rows: AggRow[] = [
+                                    { label: 'Net Sales', section: 'Income', qb: aggregateComparison.qbNetSales, db: aggregateComparison.dbNetSales, showIfZero: true },
+                                    { label: 'Cost of Goods Sold', section: 'COGS', qb: aggregateComparison.qbCogs, db: aggregateComparison.dbCogs, showIfZero: true },
+                                    { label: 'Total Labor', section: 'Expenses', qb: aggregateComparison.qbLabor, db: aggregateComparison.dbLabor, showIfZero: true },
+                                    { label: 'Store Rent', section: 'Expenses', qb: aggregateComparison.qbRent, db: (manual[selectedStore]?.rent || 0) * dbComparisonWithData.length, showIfZero: false },
+                                    { label: 'Utilities', section: 'Expenses', qb: aggregateComparison.qbUtil, db: (manual[selectedStore]?.util || 0) * dbComparisonWithData.length, showIfZero: false },
+                                    { label: 'Maintenance', section: 'Expenses', qb: aggregateComparison.qbMaint, db: (manual[selectedStore]?.maint || 0) * dbComparisonWithData.length, showIfZero: false },
+                                    { label: 'SG&A', section: 'Expenses', qb: aggregateComparison.qbSga, db: (manual[selectedStore]?.sga || 0) * dbComparisonWithData.length, showIfZero: false },
+                                    { label: 'Royalties', section: 'Expenses', qb: aggregateComparison.qbRoyalties, db: null, showIfZero: false },
+                                    { label: 'Delivery Commission', section: 'Expenses', qb: aggregateComparison.qbDeliveryComm, db: null, showIfZero: false },
+                                    { label: 'Delivery Service Fees', section: 'Expenses', qb: aggregateComparison.qbDeliveryFee, db: null, showIfZero: false },
+                                    { label: 'Advertising', section: 'Expenses', qb: aggregateComparison.qbAdvertising, db: null, showIfZero: false },
+                                    { label: 'Other Expenses', section: 'Expenses', qb: aggregateComparison.qbOtherExpense, db: null, showIfZero: false },
+                                  ];
+                                  const filtered = rows.filter(r => r.showIfZero || r.qb > 0 || (r.db !== null && r.db > 0));
+                                  let lastSection = '';
+                                  return filtered.map(row => {
+                                    const diff = row.db !== null ? row.db - row.qb : null;
+                                    const pct = row.qb > 0 && diff !== null ? Math.abs(diff) / row.qb : 0;
+                                    const sectionHeader = row.section !== lastSection ? (lastSection = row.section, row.section) : null;
+                                    return (
+                                      <React.Fragment key={row.label}>
+                                        {sectionHeader && (
+                                          <tr className="bg-secondary/20">
+                                            <td colSpan={4} className="px-6 py-2 text-xs font-bold text-muted-foreground uppercase tracking-wider">{sectionHeader}</td>
+                                          </tr>
+                                        )}
+                                        <tr className="hover:bg-muted/50 transition">
+                                          <td className="px-6 py-4 font-medium pl-8">{row.label}</td>
+                                          <td className="px-6 py-4 text-right">{formatCur(row.qb)}</td>
+                                          <td className="px-6 py-4 text-right text-muted-foreground">{row.db !== null ? formatCur(row.db) : '—'}</td>
+                                          <td className={`px-6 py-4 text-right font-medium ${diff === null ? 'text-muted-foreground' : Math.abs(diff) > 100 ? 'text-rose-400' : 'text-green-500'}`}>
+                                            {diff === null ? '—' : <>{diff > 0 ? '+' : ''}{formatCur(diff)}<span className="text-[10px] ml-1.5 opacity-70">({(pct * 100).toFixed(1)}%)</span></>}
+                                          </td>
+                                        </tr>
+                                      </React.Fragment>
+                                    );
+                                  });
+                                })()}
                               </tbody>
                             </table>
+                          </div>
+
+                          {(() => {
+                            const C = { Sales: '#3b82f6', COGS: '#8b5cf6', Labor: '#f59e0b', Royalties: '#ec4899', Delivery: '#14b8a6', Other: '#6b7280' };
+                            const dbOtherPerWeek = (manual[selectedStore]?.rent || 0) + (manual[selectedStore]?.util || 0) + (manual[selectedStore]?.maint || 0) + (manual[selectedStore]?.sga || 0);
+                            const chartData = dbComparisonWithData.map(p => ({
+                              label: p.rawLabel.replace(/\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d+)(?:\s+\d{4})?/g, '$1 $2').replace(/\s*-\s*/g, '–'),
+                              'QB Sales': p.qbNetSales, 'DB Sales': p.dbNetSales,
+                              'QB COGS': p.qbCogs, 'DB COGS': p.dbCogs,
+                              'QB Labor': p.qbLabor, 'DB Labor': p.dbLabor,
+                              'QB Royalties': p.qbRoyalties,
+                              'QB Delivery': p.qbDeliveryComm + p.qbDeliveryFee,
+                              'QB Other': p.qbAdvertising + p.qbOtherExpense + p.qbRent + p.qbUtil + p.qbMaint + p.qbSga,
+                              'DB Other': dbOtherPerWeek,
+                            }));
+                            const fmt = (v: number) => `$${v.toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
+                            const CustomTooltip = ({ active, payload, label }: any) => {
+                              if (!active || !payload || !activeBarKey) return null;
+                              const item = payload.find((p: any) => p.name === activeBarKey);
+                              if (!item || !item.value) return null;
+                              const source = activeBarKey.startsWith('QB') ? 'QuickBooks' : 'Database';
+                              return (
+                                <div style={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, padding: '8px 12px', fontSize: 12 }}>
+                                  <div style={{ fontWeight: 600, marginBottom: 4 }}>{label}</div>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                    <span style={{ width: 10, height: 10, borderRadius: 2, background: item.fill, display: 'inline-block' }} />
+                                    <span style={{ color: 'hsl(var(--muted-foreground))' }}>{source} · {activeBarKey.replace(/^(QB|DB)\s/, '')}</span>
+                                    <span style={{ fontWeight: 600, marginLeft: 8 }}>{fmt(item.value)}</span>
+                                  </div>
+                                </div>
+                              );
+                            };
+                            const barProps = (key: string, stackId: string, color: string, isTop = false) => ({
+                              dataKey: key, stackId, fill: color,
+                              radius: isTop ? [3, 3, 0, 0] as [number,number,number,number] : [0,0,0,0] as [number,number,number,number],
+                              onMouseEnter: () => setActiveBarKey(key),
+                              onMouseLeave: () => setActiveBarKey(null),
+                            });
+                            const legendItems = [
+                              { color: C.Sales, label: 'Sales' }, { color: C.COGS, label: 'COGS' },
+                              { color: C.Labor, label: 'Labor' }, { color: C.Royalties, label: 'Royalties' },
+                              { color: C.Delivery, label: 'Delivery' }, { color: C.Other, label: 'Other' },
+                            ];
+                            return (
+                              <div className="space-y-2 mt-6">
+                                <h3 className="text-sm font-bold text-foreground uppercase tracking-wider">Weekly P&L Comparison</h3>
+                                <div className="flex items-center gap-4 flex-wrap">
+                                  {legendItems.map(l => (
+                                    <div key={l.label} className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                                      <span style={{ width: 10, height: 10, borderRadius: 2, background: l.color, display: 'inline-block' }} />
+                                      {l.label}
+                                    </div>
+                                  ))}
+                                  <span className="text-xs text-muted-foreground ml-auto">Left bar = QB · Right bar = DB</span>
+                                </div>
+                                <div className="rounded-xl border border-border p-4 bg-background/50">
+                                  <ResponsiveContainer width="100%" height={340}>
+                                    <BarChart data={chartData} margin={{ top: 8, right: 16, left: 16, bottom: 64 }} barCategoryGap="25%" barGap={1}>
+                                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
+                                      <XAxis dataKey="label" tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }} angle={-40} textAnchor="end" interval={0} />
+                                      <YAxis tickFormatter={v => `$${(v/1000).toFixed(0)}k`} tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }} />
+                                      <Tooltip content={<CustomTooltip />} cursor={{ fill: 'hsl(var(--muted))', opacity: 0.3 }} />
+                                      {/* Revenue pair */}
+                                      <Bar {...barProps('QB Sales', 'qb-rev', C.Sales, true)} />
+                                      <Bar {...barProps('DB Sales', 'db-rev', C.Sales, true)} />
+                                      {/* Expense stacks */}
+                                      <Bar {...barProps('QB COGS', 'qb-exp', C.COGS)} />
+                                      <Bar {...barProps('DB COGS', 'db-exp', C.COGS)} />
+                                      <Bar {...barProps('QB Labor', 'qb-exp', C.Labor)} />
+                                      <Bar {...barProps('DB Labor', 'db-exp', C.Labor)} />
+                                      <Bar {...barProps('QB Royalties', 'qb-exp', C.Royalties)} />
+                                      <Bar {...barProps('QB Delivery', 'qb-exp', C.Delivery)} />
+                                      <Bar {...barProps('QB Other', 'qb-exp', C.Other, true)} />
+                                      <Bar {...barProps('DB Other', 'db-exp', C.Other, true)} />
+                                    </BarChart>
+                                  </ResponsiveContainer>
+                                </div>
+                              </div>
+                            );
+                          })()}
+
+                          <div className="space-y-2 mt-6">
+                            <div className="flex items-center gap-2">
+                              <Database className="w-4 h-4 text-primary" />
+                              <h3 className="text-sm font-bold text-foreground uppercase tracking-wider">Week-by-Week Breakdown</h3>
+                            </div>
+                            <div className="border border-border rounded-xl overflow-x-auto max-h-[500px] overflow-y-auto">
+                              <table className="min-w-full text-sm text-left whitespace-nowrap">
+                                <thead className="text-xs text-muted-foreground uppercase bg-background/50 sticky top-0">
+                                  <tr>
+                                    <th className="px-4 py-3">Period (from P&L)</th>
+                                    <th className="px-4 py-3 text-right">Net Sales (QB)</th>
+                                    <th className="px-4 py-3 text-right">Net Sales (DB)</th>
+                                    <th className="px-4 py-3 text-right">Δ Sales</th>
+                                    <th className="px-4 py-3 text-right">COGS (QB)</th>
+                                    <th className="px-4 py-3 text-right">COGS (DB)</th>
+                                    <th className="px-4 py-3 text-right">Δ COGS</th>
+                                    <th className="px-4 py-3 text-right">Labor (QB)</th>
+                                    <th className="px-4 py-3 text-right">Labor (DB)</th>
+                                    <th className="px-4 py-3 text-right">Δ Labor</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-800/60">
+                                  {dbComparisonWithData.map((p, i) => (
+                                    <tr key={i} className="hover:bg-muted/50 transition">
+                                      <td className="px-4 py-2">
+                                        <div className="font-medium text-foreground">{p.rawLabel}</div>
+                                        <div className="text-xs text-muted-foreground">{p.weekEndDate}</div>
+                                      </td>
+                                      <td className="px-4 py-2 text-right">{formatCur(p.qbNetSales)}</td>
+                                      <td className="px-4 py-2 text-right">{formatCur(p.dbNetSales)}</td>
+                                      <td className={`px-4 py-2 text-right font-medium ${Math.abs(p.diffSales) > 100 ? 'text-rose-400' : 'text-green-500'}`}>
+                                        {p.diffSales > 0 ? '+' : ''}{formatCur(p.diffSales)}
+                                        <span className="text-[10px] ml-1 opacity-70">({(p.pctSales * 100).toFixed(1)}%)</span>
+                                      </td>
+                                      <td className="px-4 py-2 text-right">{formatCur(p.qbCogs)}</td>
+                                      <td className="px-4 py-2 text-right">{formatCur(p.dbCogs)}</td>
+                                      <td className={`px-4 py-2 text-right font-medium ${Math.abs(p.diffCogs) > 100 ? 'text-rose-400' : 'text-green-500'}`}>
+                                        {p.diffCogs > 0 ? '+' : ''}{formatCur(p.diffCogs)}
+                                        <span className="text-[10px] ml-1 opacity-70">({(p.pctCogs * 100).toFixed(1)}%)</span>
+                                      </td>
+                                      <td className="px-4 py-2 text-right">{formatCur(p.qbLabor)}</td>
+                                      <td className="px-4 py-2 text-right">{formatCur(p.dbLabor)}</td>
+                                      <td className={`px-4 py-2 text-right font-medium ${Math.abs(p.diffLabor) > 100 ? 'text-rose-400' : 'text-green-500'}`}>
+                                        {p.diffLabor > 0 ? '+' : ''}{formatCur(p.diffLabor)}
+                                        <span className="text-[10px] ml-1 opacity-70">({(p.pctLabor * 100).toFixed(1)}%)</span>
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
                           </div>
                         </div>
                       )}
