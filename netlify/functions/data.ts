@@ -33,33 +33,30 @@ export default async function handler(request: Request) {
     if (request.method === 'POST') {
       const { reports, adjustments } = await request.json();
 
-      // Upsert daily reports
+      // Upsert daily reports using a bulk operation
       if (reports && reports.length > 0) {
-        for (const report of reports) {
-          const { business_date, data } = report;
-          // Store data json directly stringified to avoid injection issues
-          const stringifiedData = JSON.stringify(data);
-          await sql`
-            INSERT INTO daily_reports (business_date, data)
-            VALUES (${business_date}, ${stringifiedData}::jsonb)
-            ON CONFLICT (business_date) 
-            DO UPDATE SET data = EXCLUDED.data, created_at = CURRENT_TIMESTAMP
-          `;
-        }
+        const dates = reports.map((r: any) => r.business_date);
+        const payloads = reports.map((r: any) => JSON.stringify(r.data));
+
+        await sql`
+          INSERT INTO daily_reports (business_date, data)
+          SELECT * FROM UNNEST(${dates}::text[], ${payloads}::jsonb[])
+          ON CONFLICT (business_date)
+          DO UPDATE SET data = EXCLUDED.data, created_at = CURRENT_TIMESTAMP
+        `;
       }
 
-      // Upsert manual adjustments
+      // Upsert manual adjustments using a bulk operation
       if (adjustments && Array.isArray(adjustments)) {
-        for (const adj of adjustments) {
-          const { store_id, data } = adj;
-          const stringifiedData = JSON.stringify(data);
-          await sql`
-            INSERT INTO manual_adjustments (store_id, data)
-            VALUES (${store_id}, ${stringifiedData}::jsonb)
-            ON CONFLICT (store_id)
-            DO UPDATE SET data = EXCLUDED.data, updated_at = CURRENT_TIMESTAMP
-          `;
-        }
+        const storeIds = adjustments.map((adj: any) => adj.store_id);
+        const payloads = adjustments.map((adj: any) => JSON.stringify(adj.data));
+
+        await sql`
+          INSERT INTO manual_adjustments (store_id, data)
+          SELECT * FROM UNNEST(${storeIds}::text[], ${payloads}::jsonb[])
+          ON CONFLICT (store_id)
+          DO UPDATE SET data = EXCLUDED.data, updated_at = CURRENT_TIMESTAMP
+        `;
       }
 
       return Response.json({ success: true });
@@ -68,9 +65,8 @@ export default async function handler(request: Request) {
     if (request.method === 'DELETE') {
       const { dates } = await request.json();
       if (dates && Array.isArray(dates) && dates.length > 0) {
-        for (const date of dates) {
-          await sql`DELETE FROM daily_reports WHERE business_date = ${date}`;
-        }
+        // Bulk delete using ANY operator
+        await sql`DELETE FROM daily_reports WHERE business_date = ANY(${dates}::text[])`;
       }
       return Response.json({ success: true });
     }
